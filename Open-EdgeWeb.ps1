@@ -125,41 +125,11 @@ $form.Size = New-Object System.Drawing.Size($Width, $Height)
 $form.StartPosition = 'CenterScreen'
 $form.MinimumSize = New-Object System.Drawing.Size(900, 600)
 
-$toolbar = New-Object System.Windows.Forms.Panel
-$toolbar.Dock = 'Top'
-$toolbar.Height = 40
-
-$btnBack = New-Object System.Windows.Forms.Button
-$btnBack.Text = '<'; $btnBack.Location = New-Object System.Drawing.Point(8, 8)
-$btnBack.Size = New-Object System.Drawing.Size(32, 24); $btnBack.Enabled = $false
-
-$btnFwd = New-Object System.Windows.Forms.Button
-$btnFwd.Text = '>'; $btnFwd.Location = New-Object System.Drawing.Point(44, 8)
-$btnFwd.Size = New-Object System.Drawing.Size(32, 24); $btnFwd.Enabled = $false
-
-$btnRefresh = New-Object System.Windows.Forms.Button
-$btnRefresh.Text = '刷新'; $btnRefresh.Location = New-Object System.Drawing.Point(80, 8)
-$btnRefresh.Size = New-Object System.Drawing.Size(52, 24)
-
-$btnHome = New-Object System.Windows.Forms.Button
-$btnHome.Text = '首页'; $btnHome.Location = New-Object System.Drawing.Point(136, 8)
-$btnHome.Size = New-Object System.Drawing.Size(52, 24)
-
-$address = New-Object System.Windows.Forms.TextBox
-$address.Text = $Url
-$address.Location = New-Object System.Drawing.Point(200, 8)
-$address.Size = New-Object System.Drawing.Size(700, 24)
-$address.Anchor = 'Top,Left,Right'
-
-$btnGo = New-Object System.Windows.Forms.Button
-$btnGo.Text = '前往'; $btnGo.Size = New-Object System.Drawing.Size(52, 24)
-$btnGo.Anchor = 'Top,Right'
-
 $status = New-Object System.Windows.Forms.Label
 $status.Dock = 'Bottom'
 $status.Height = 24
 $status.TextAlign = 'MiddleLeft'
-$status.Text = '点播/直播链接将用 mpv 流式播放，不在网页内打开'
+$status.Text = '  点击视频/直播链接将用 mpv 流式播放'
 
 $web = [Activator]::CreateInstance([Microsoft.Web.WebView2.WinForms.WebView2])
 $web.Dock = 'Fill'
@@ -191,8 +161,6 @@ function Navigate-To([string]$target) {
     if ([string]::IsNullOrWhiteSpace($t)) { return }
     if ($t -notmatch '^\w+://') { $t = "https://$t" }
     if (Start-StreamPlay $t) { return }
-    $address.Text = $t
-    Set-Status "正在加载: $t"
     if ($null -ne $web.CoreWebView2) {
         $web.CoreWebView2.Navigate($t)
     } else {
@@ -200,27 +168,8 @@ function Navigate-To([string]$target) {
     }
 }
 
-function Update-Layout {
-    $w = $form.ClientSize.Width
-    $btnGo.Location = New-Object System.Drawing.Point(($w - 60), 8)
-    $address.Width = $w - 280
-}
-$form.Add_Resize({ Update-Layout })
-Update-Layout
-
-$toolbar.Controls.AddRange(@($btnBack, $btnFwd, $btnRefresh, $btnHome, $address, $btnGo))
-$form.Controls.Add($toolbar)
 $form.Controls.Add($status)
 $form.Controls.Add($web)
-
-$btnGo.Add_Click({ Navigate-To $address.Text })
-$address.Add_KeyDown({
-    if ($_.KeyCode -eq 'Enter') { $_.SuppressKeyPress = $true; Navigate-To $address.Text }
-})
-$btnHome.Add_Click({ Navigate-To 'https://www.bilibili.com' })
-$btnRefresh.Add_Click({ $web.Reload() })
-$btnBack.Add_Click({ if ($web.CanGoBack) { $web.GoBack() } })
-$btnFwd.Add_Click({ if ($web.CanGoForward) { $web.GoForward() } })
 
 $form.Add_Shown({
     $web.Add_CoreWebView2InitializationCompleted({
@@ -267,13 +216,10 @@ $form.Add_Shown({
 
         $core.add_NavigationCompleted({
             param($s, $ev)
-            $btnBack.Enabled = $web.CanGoBack
-            $btnFwd.Enabled = $web.CanGoForward
-            if ($web.Source) { $address.Text = $web.Source.ToString() }
             if ($ev.IsSuccess) {
-                Set-Status '点播/直播链接将用 mpv 流式播放，不在网页内打开'
+                Set-Status '点击视频/直播链接将用 mpv 流式播放'
             } else {
-                Set-Status "加载失败 ($($ev.WebErrorStatus))，请点刷新重试"
+                Set-Status "加载失败 ($($ev.WebErrorStatus))"
             }
         })
 
