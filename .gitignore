@@ -1,0 +1,13 @@
+# 本地配置（含路径、Cookie 等）
+config.ps1
+
+# 运行时 / 构建产物
+runtime/
+tools/webview2/*.dll
+bin/
+obj/
+*.exe
+
+# Windows
+Thumbs.db
+Desktop.ini
