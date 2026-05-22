@@ -1,12 +1,13 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-  解析 B 站链接并用 mpv 流式播放（点播 / 直播）。退出或切换时自动清理缓冲。
-  直播从接入时刻起计时（不显示开播以来的总时长）。
+  B 站链接 → yt-dlp 取流（Cookie + Referer）→ mpv 直链播放。
+  点击即播最高可用画质；播放中用 Switch-BiliQuality.ps1 通过 mpv IPC 换画质。
 #>
 param(
     [Parameter(Mandatory = $true)]
-    [string]$Url
+    [string]$Url,
+    [string]$Format = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,26 +16,41 @@ $RuntimeDir = Join-Path $Root 'runtime'
 $CacheRoot = Join-Path $RuntimeDir 'play-cache'
 $LinkFile = Join-Path $RuntimeDir 'current-link.txt'
 $PidFile = Join-Path $RuntimeDir 'play.pid'
+$StateFile = Join-Path $RuntimeDir 'play-state.json'
 $ConfigPath = Join-Path $Root 'config.ps1'
+$FormatsScript = Join-Path $Root 'Bilibili-Formats.ps1'
+$MpvPipeName = 'bili-play-ipc'
 
 $YtdlpPath = $null
 $MpvPath = $null
 $FfmpegPath = $null
+$YtdlpCookiesFile = $null
+$YtdlpCookieBrowser = $null
+$YtdlpUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0'
 $MpvCacheSecs = 300
 $LiveCacheSecs = 20
-$VodFormat = 'bestvideo+bestaudio/best'
-$LiveFormat = 'best[ext=flv]/best/best'
+$DefaultVodFormat = 'bestvideo+bestaudio/best'
+$DefaultLiveFormat = 'best[ext=flv]/best/best'
 
 if (Test-Path $ConfigPath) { . $ConfigPath }
+if (Test-Path -LiteralPath $FormatsScript) { . $FormatsScript }
+if (Get-Command Set-BiliDiagLogPath -ErrorAction SilentlyContinue) {
+    Set-BiliDiagLogPath $RuntimeDir
+    Write-BiliDiagSession -ScriptName 'Start-StreamPlay' -Meta @{ url = $Url }
+}
+if (-not $YtdlpCookiesFile) {
+    $autoCookie = Join-Path $RuntimeDir 'bilibili-cookies.txt'
+    if (Test-Path -LiteralPath $autoCookie) { $YtdlpCookiesFile = $autoCookie }
+}
 
 function Find-Executable {
     param([string]$Name, [string]$Override, [string[]]$Fallbacks)
     if ($Override -and (Test-Path -LiteralPath $Override)) { return (Resolve-Path -LiteralPath $Override).Path }
-    $cmd = Get-Command $Name -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
     foreach ($p in $Fallbacks) {
         if ($p -and (Test-Path -LiteralPath $p)) { return (Resolve-Path -LiteralPath $p).Path }
     }
+    $cmd = Get-Command $Name -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
     return $null
 }
 
@@ -59,21 +75,30 @@ function Stop-PreviousPlayer {
         Get-Content -LiteralPath $PidFile -ErrorAction SilentlyContinue | ForEach-Object {
             if ($_ -match '^(\w+)=(\d+)$') {
                 Start-Process -FilePath 'taskkill.exe' -ArgumentList @('/F', '/T', '/PID', $Matches[2]) `
-                    -WindowStyle Hidden -Wait -ErrorAction SilentlyContinue | Out-Null
+                    -WindowStyle Hidden -ErrorAction SilentlyContinue | Out-Null
             } elseif ($_ -match '^\d+$') {
                 Start-Process -FilePath 'taskkill.exe' -ArgumentList @('/F', '/T', '/PID', $_) `
-                    -WindowStyle Hidden -Wait -ErrorAction SilentlyContinue | Out-Null
+                    -WindowStyle Hidden -ErrorAction SilentlyContinue | Out-Null
             }
         }
         Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
     }
-    Get-ChildItem -LiteralPath $CacheRoot -Filter 'play.pids' -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
-        Get-Content -LiteralPath $_.FullName -ErrorAction SilentlyContinue | ForEach-Object {
-            if ($_ -match '^(\w+)=(\d+)$') {
-                Stop-Process -Id ([int]$Matches[2]) -Force -ErrorAction SilentlyContinue
-            }
-        }
+    foreach ($playerName in @('mpvnet', 'mpv')) {
+        Get-Process -Name $playerName -ErrorAction SilentlyContinue |
+            Stop-Process -Force -ErrorAction SilentlyContinue
     }
+    Remove-Item -LiteralPath $StateFile -Force -ErrorAction SilentlyContinue
+}
+
+function Write-PlayState {
+    param([string]$MediaUrl, [bool]$IsLive, [int]$PlayerPid)
+    $state = @{
+        url      = $MediaUrl
+        pipeName = $MpvPipeName
+        isLive   = $IsLive
+        playerPid = $PlayerPid
+    }
+    $state | ConvertTo-Json | Set-Content -LiteralPath $StateFile -Encoding UTF8
 }
 
 function Start-MpvCacheWatcher {
@@ -120,176 +145,27 @@ function Stop-MpvCacheWatcher($Job) {
     Remove-Job $Job -Force -ErrorAction SilentlyContinue
 }
 
-function Resolve-LiveStreamUrl {
-    param([string]$YtdlpExe, [string]$MediaUrl)
-    $output = & $YtdlpExe @('-f', $LiveFormat, '-g', '--no-playlist', $MediaUrl) 2>&1 | ForEach-Object { "$_" }
-    if ($LASTEXITCODE -ne 0) {
-        throw ($output -join "`n")
-    }
-    $url = @($output | Where-Object { $_ -match '^\w+://' } | Select-Object -First 1)
-    if (-not $url) { throw "未能解析直播流地址: $MediaUrl" }
-    return $url
-}
-
 function Start-LivePlayerDirect {
     param(
-        [string]$MpvExe,
-        [string]$YtdlpExe,
-        [string]$MediaUrl,
-        [string]$SessionDir,
-        [string]$PipeName
+        [string]$MpvExe, [string]$YtdlpExe, [string]$MediaUrl,
+        [string]$SessionDir, [string]$PipeName, [string]$FormatSpec,
+        [string]$Referer, [string]$UserAgent,
+        [string]$CookieBrowser, [string]$CookiesFile
     )
-
+    $streamUrls = Resolve-StreamUrls -YtdlpExe $YtdlpExe -MediaUrl $MediaUrl -FormatSpec $FormatSpec `
+        -Referer $Referer -UserAgent $UserAgent -CookieBrowser $CookieBrowser `
+        -CookiesFile $CookiesFile -RuntimeDir $RuntimeDir
     $mpvArgs = @(
-        '--force-window=yes'
-        '--keep-open=yes'
-        '--ytdl=yes'
-        "--ytdl-executable=$YtdlpExe"
-        "--ytdl-format=$LiveFormat"
-        '--force-seekable=no'
-        '--rebase-start-time=yes'
-        '--cache=yes'
-        "--cache-secs=$LiveCacheSecs"
-        '--demuxer-max-bytes=52428800'
-        '--demuxer-max-back-bytes=20971520'
-        "--input-ipc-server=\\.\pipe\$PipeName"
+        '--force-window=yes', '--keep-open=yes', '--no-ytdl', '--demuxer-lavf-format=flv',
+        '--force-seekable=no', '--rebase-start-time=yes', '--cache=yes',
+        "--cache-secs=$LiveCacheSecs", '--demuxer-max-bytes=52428800',
+        '--demuxer-max-back-bytes=20971520', "--input-ipc-server=\\.\pipe\$PipeName",
         '--msg-level=all=warn'
-        $MediaUrl
     )
+    $mpvArgs = Add-MpvStreamArgs -MpvArgs $mpvArgs -StreamUrls $streamUrls -Referrer $MediaUrl
+    $mpvArgs = Add-MpvNetLaunchArgs -MpvExe $MpvExe -MpvArgs $mpvArgs
     $proc = Start-Process -FilePath $MpvExe -ArgumentList $mpvArgs -PassThru
-    return [pscustomobject]@{
-        Mode = 'direct'
-        Main = $proc
-    }
-}
-
-function Start-LivePlayerPiped {
-    param(
-        [string]$MpvExe,
-        [string]$YtdlpExe,
-        [string]$FfmpegExe,
-        [string]$MediaUrl,
-        [string]$SessionDir,
-        [string]$PipeName
-    )
-
-    $streamUrl = Resolve-LiveStreamUrl -YtdlpExe $YtdlpExe -MediaUrl $MediaUrl
-    $logFile = Join-Path $SessionDir 'live-play.log'
-
-    $mpvArgs = @(
-        '--force-window=yes'
-        '--keep-open=yes'
-        '--no-ytdl'
-        '--demuxer-lavf-format=flv'
-        '--force-seekable=no'
-        '--rebase-start-time=yes'
-        '--cache=yes'
-        "--cache-secs=$LiveCacheSecs"
-        '--demuxer-max-bytes=52428800'
-        '--demuxer-max-back-bytes=20971520'
-        "--input-ipc-server=\\.\pipe\$PipeName"
-        '--msg-level=all=warn'
-        '-'
-    )
-
-    $ffArgs = @(
-        '-nostdin', '-hide_banner', '-loglevel', 'warning',
-        '-fflags', '+nobuffer+flush_packets',
-        '-flags', 'low_delay',
-        '-probesize', '32768',
-        '-analyzeduration', '500000',
-        '-i', $streamUrl,
-        '-c', 'copy',
-        '-f', 'flv',
-        '-reset_timestamps', '1',
-        '-muxdelay', '0',
-        '-muxpreload', '0',
-        'pipe:1'
-    )
-
-    $mpvPsi = New-Object System.Diagnostics.ProcessStartInfo
-    $mpvPsi.FileName = $MpvExe
-    $mpvPsi.Arguments = ($mpvArgs | ForEach-Object {
-        if ($_ -match '[\s"]') { '"{0}"' -f ($_.Replace('"', '\"')) } else { $_ }
-    }) -join ' '
-    $mpvPsi.UseShellExecute = $false
-    $mpvPsi.RedirectStandardInput = $true
-    $mpvPsi.CreateNoWindow = $true
-    $mpvProc = [System.Diagnostics.Process]::Start($mpvPsi)
-
-    $ffPsi = New-Object System.Diagnostics.ProcessStartInfo
-    $ffPsi.FileName = $FfmpegExe
-    $ffPsi.UseShellExecute = $false
-    $ffPsi.RedirectStandardOutput = $true
-    $ffPsi.RedirectStandardError = $true
-    $ffPsi.CreateNoWindow = $true
-    $ffPsi.Arguments = ($ffArgs | ForEach-Object {
-        if ($_ -match '[\s"]') { '"{0}"' -f ($_.Replace('"', '\"')) } else { $_ }
-    }) -join ' '
-    $ffProc = [System.Diagnostics.Process]::Start($ffPsi)
-
-    $pipePs = [powershell]::Create()
-    $null = $pipePs.AddScript({
-        param($Ff, $Mpv, $Log)
-        try {
-            $Ff.StandardOutput.BaseStream.CopyTo($Mpv.StandardInput.BaseStream)
-        } catch {
-            [System.IO.File]::AppendAllText($Log, ('pipe: ' + $_.Exception.Message + [Environment]::NewLine))
-        } finally {
-            try { $Mpv.StandardInput.Close() } catch { }
-        }
-    }).AddArgument($ffProc).AddArgument($mpvProc).AddArgument($logFile)
-    $pipeAsync = $pipePs.BeginInvoke()
-
-    $errPs = [powershell]::Create()
-    $null = $errPs.AddScript({
-        param($Ff, $Log)
-        try {
-            while (($line = $Ff.StandardError.ReadLine()) -ne $null) {
-                [System.IO.File]::AppendAllText($Log, ($line + [Environment]::NewLine))
-            }
-        } catch { }
-    }).AddArgument($ffProc).AddArgument($logFile)
-    $errAsync = $errPs.BeginInvoke()
-
-    return [pscustomobject]@{
-        Mode      = 'piped'
-        Main      = $mpvProc
-        Ffmpeg    = $ffProc
-        PipePs    = $pipePs
-        PipeAsync = $pipeAsync
-        ErrPs     = $errPs
-        ErrAsync  = $errAsync
-    }
-}
-
-function Start-LivePlayer {
-    param(
-        [string]$MpvExe,
-        [string]$YtdlpExe,
-        [string]$FfmpegExe,
-        [string]$MediaUrl,
-        [string]$SessionDir,
-        [string]$PipeName
-    )
-
-    if ($FfmpegExe) {
-        try {
-            $piped = Start-LivePlayerPiped -MpvExe $MpvExe -YtdlpExe $YtdlpExe -FfmpegExe $FfmpegExe `
-                -MediaUrl $MediaUrl -SessionDir $SessionDir -PipeName $PipeName
-            Start-Sleep -Seconds 3
-            if (-not $piped.Main.HasExited) {
-                return $piped
-            }
-            Stop-LivePlayer $piped
-        } catch {
-            $msg = $_.Exception.Message
-            [System.IO.File]::AppendAllText((Join-Path $SessionDir 'live-play.log'), ('fallback: ' + $msg + [Environment]::NewLine))
-        }
-    }
-
-    return Start-LivePlayerDirect -MpvExe $MpvExe -YtdlpExe $YtdlpExe `
-        -MediaUrl $MediaUrl -SessionDir $SessionDir -PipeName $PipeName
+    return [pscustomobject]@{ Mode = 'direct'; Main = $proc }
 }
 
 function Stop-LivePlayer($LiveHandle) {
@@ -299,111 +175,114 @@ function Stop-LivePlayer($LiveHandle) {
             try { $proc.Kill() } catch { }
         }
     }
-    foreach ($item in @(
-        @{ Ps = $LiveHandle.PipePs; Async = $LiveHandle.PipeAsync }
-        @{ Ps = $LiveHandle.ErrPs; Async = $LiveHandle.ErrAsync }
-    )) {
-        if ($null -eq $item.Ps) { continue }
-        try {
-            if ($null -ne $item.Async -and -not $item.Async.IsCompleted) {
-                $item.Ps.Stop()
-            } elseif ($null -ne $item.Async) {
-                $item.Ps.EndInvoke($item.Async) | Out-Null
-            }
-        } catch { }
-        $item.Ps.Dispose()
-    }
 }
 
 function Start-VodPlayer {
     param(
-        [string]$MpvExe,
-        [string]$YtdlpExe,
-        [string]$MediaUrl,
-        [string]$SessionDir,
-        [string]$PipeName
+        [string]$MpvExe, [string]$YtdlpExe, [string]$MediaUrl,
+        [string]$SessionDir, [string]$PipeName, [string]$FormatSpec,
+        [string]$Referer, [string]$UserAgent,
+        [string]$CookieBrowser, [string]$CookiesFile
     )
-
+    $streamUrls = Resolve-StreamUrls -YtdlpExe $YtdlpExe -MediaUrl $MediaUrl -FormatSpec $FormatSpec `
+        -Referer $Referer -UserAgent $UserAgent -CookieBrowser $CookieBrowser `
+        -CookiesFile $CookiesFile -RuntimeDir $RuntimeDir
     $mpvArgs = @(
-        '--force-window=yes'
-        '--keep-open=yes'
-        '--ytdl=yes'
-        "--ytdl-executable=$YtdlpExe"
-        "--ytdl-format=$VodFormat"
-        '--cache=yes'
-        "--cache-dir=$SessionDir"
-        "--demuxer-max-bytes=$((($MpvCacheSecs * 1024 * 1024) / 4))B"
-        "--input-ipc-server=\\.\pipe\$PipeName"
-        '--msg-level=all=warn'
-        $MediaUrl
+        '--force-window=yes', '--keep-open=yes', '--no-ytdl', '--cache=yes',
+        "--cache-dir=$SessionDir", "--demuxer-max-bytes=$((($MpvCacheSecs * 1024 * 1024) / 4))B",
+        "--input-ipc-server=\\.\pipe\$PipeName", '--msg-level=all=warn'
     )
+    $mpvArgs = Add-MpvStreamArgs -MpvArgs $mpvArgs -StreamUrls $streamUrls -Referrer $MediaUrl
+    $mpvArgs = Add-MpvNetLaunchArgs -MpvExe $MpvExe -MpvArgs $mpvArgs
     return Start-Process -FilePath $MpvExe -ArgumentList $mpvArgs -PassThru
 }
 
-try { $Url = ([Uri]$Url.Trim()).AbsoluteUri } catch { throw "无效链接: $Url" }
+$ErrorLog = Join-Path $RuntimeDir 'play-error.log'
 
-$ytdlp = Find-Executable -Name 'yt-dlp' -Override $YtdlpPath -Fallbacks @()
-$mpv = Find-Executable -Name 'mpv' -Override $MpvPath -Fallbacks @(
-    (Join-Path $env:LOCALAPPDATA 'Programs\mpv.net\mpvnet.exe')
-    (Join-Path $env:LOCALAPPDATA 'Programs\mpv.net\mpv.exe')
-)
-$ffmpegFallback = (Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages') -Recurse -Filter 'ffmpeg.exe' -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
-$ffmpeg = Find-Executable -Name 'ffmpeg' -Override $FfmpegPath -Fallbacks @($ffmpegFallback)
-if (-not $ytdlp) { throw '未找到 yt-dlp。请运行: winget install yt-dlp.yt-dlp' }
-if (-not $mpv) { throw '未找到 mpv。请运行: winget install mpv.net' }
-
-$isLive = Test-LiveUrl $Url
-if ($isLive -and -not $ffmpeg) {
-    throw '直播播放需要 ffmpeg。请运行: winget install yt-dlp.FFmpeg'
+function Write-PlayError([string]$Message) {
+    if (Get-Command Write-BiliDiag -ErrorAction SilentlyContinue) {
+        Write-BiliDiag -Level 'ERROR' -Category 'PLAY' -Script 'Start-StreamPlay' -Message $Message
+    } else {
+        $line = '[{0:yyyy-MM-dd HH:mm:ss}] {1}' -f (Get-Date), $Message
+        Add-Content -LiteralPath $ErrorLog -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue
+    }
 }
-
-New-Item -ItemType Directory -Path $RuntimeDir -Force | Out-Null
-New-Item -ItemType Directory -Path $CacheRoot -Force | Out-Null
-Set-Content -LiteralPath $LinkFile -Value $Url -Encoding UTF8
-
-Stop-PreviousPlayer
-Get-ChildItem -LiteralPath $CacheRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-    Remove-PlayCacheSession $_.FullName
-}
-
-$sessionDir = Join-Path $CacheRoot ("session-{0:yyyyMMdd-HHmmss}-{1}" -f (Get-Date), $PID)
-New-Item -ItemType Directory -Path $sessionDir -Force | Out-Null
-$sessionDir = (Resolve-Path -LiteralPath $sessionDir).Path
-
-$pipeName = "bili-play-$PID"
-$oldTemp = $env:TEMP
-$oldTmp = $env:TMP
-$env:TEMP = $sessionDir
-$env:TMP = $sessionDir
-$watcher = $null
-$liveHandle = $null
 
 try {
-    if ($isLive) {
-        $liveHandle = Start-LivePlayer -MpvExe $mpv -YtdlpExe $ytdlp -FfmpegExe $ffmpeg `
-            -MediaUrl $Url -SessionDir $sessionDir -PipeName $pipeName
-        $proc = $liveHandle.Main
-        $pidLines = @("mpv=$($proc.Id)")
-        if ($null -ne $liveHandle.Ffmpeg) { $pidLines += "ffmpeg=$($liveHandle.Ffmpeg.Id)" }
-        Set-Content -LiteralPath $PidFile -Value $pidLines -Encoding ASCII
-    } else {
-        $proc = Start-VodPlayer -MpvExe $mpv -YtdlpExe $ytdlp `
-            -MediaUrl $Url -SessionDir $sessionDir -PipeName $pipeName
-        Set-Content -LiteralPath $PidFile -Value "mpv=$($proc.Id)" -Encoding ASCII
+    try { $Url = ([Uri]$Url.Trim()).AbsoluteUri } catch { throw "无效链接: $Url" }
+    if (Get-Command Normalize-BiliUrl -ErrorAction SilentlyContinue) {
+        $Url = Normalize-BiliUrl $Url
     }
 
-    Start-Sleep -Milliseconds 800
-    $watcher = Start-MpvCacheWatcher -PipeName $pipeName -CacheDir $sessionDir
-    $proc.WaitForExit()
-    if ($null -ne $liveHandle) {
-        Stop-LivePlayer $liveHandle
+    $ytdlp = Find-Executable -Name 'yt-dlp' -Override $YtdlpPath -Fallbacks @()
+    $mpv = Find-Executable -Name 'mpv' -Override $MpvPath -Fallbacks @(
+        (Join-Path $env:LOCALAPPDATA 'Programs\mpv\mpv.exe')
+        (Join-Path $env:LOCALAPPDATA 'Programs\mpv.net\mpv.exe')
+        (Join-Path $env:LOCALAPPDATA 'Programs\mpv.net\mpvnet.exe')
+    )
+    $ffmpeg = Find-Executable -Name 'ffmpeg' -Override $FfmpegPath -Fallbacks @(
+        (Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages') -Recurse -Filter 'ffmpeg.exe' -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+    )
+    if (-not $ytdlp) { throw '未找到 yt-dlp。请运行: winget install yt-dlp.yt-dlp' }
+    if (-not $mpv) { throw '未找到 mpv。请运行: winget install mpv.net' }
+
+    $isLive = Test-LiveUrl $Url
+    if ($isLive -and -not $ffmpeg) {
+        throw '直播播放需要 ffmpeg。请运行: winget install yt-dlp.FFmpeg'
     }
-} finally {
-    Stop-MpvCacheWatcher $watcher
-    Stop-LivePlayer $liveHandle
-    $env:TEMP = $oldTemp
-    $env:TMP = $oldTmp
-    Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $LinkFile -Force -ErrorAction SilentlyContinue
-    Remove-PlayCacheSession $sessionDir
+
+    New-Item -ItemType Directory -Path $RuntimeDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $CacheRoot -Force | Out-Null
+    Set-Content -LiteralPath $LinkFile -Value $Url -Encoding UTF8
+    Stop-PreviousPlayer
+
+    $formatSpec = $Format
+    if ([string]::IsNullOrWhiteSpace($formatSpec)) {
+        $formatSpec = if ($isLive) { $DefaultLiveFormat } else { $DefaultVodFormat }
+    }
+
+    $sessionDir = Join-Path $CacheRoot ("session-{0:yyyyMMdd-HHmmss}-{1}" -f (Get-Date), $PID)
+    New-Item -ItemType Directory -Path $sessionDir -Force | Out-Null
+    $sessionDir = (Resolve-Path -LiteralPath $sessionDir).Path
+    $oldTemp = $env:TEMP
+    $oldTmp = $env:TMP
+    $env:TEMP = $sessionDir
+    $env:TMP = $sessionDir
+    $watcher = $null
+    $liveHandle = $null
+
+    try {
+        if ($isLive) {
+            $liveHandle = Start-LivePlayerDirect -MpvExe $mpv -YtdlpExe $ytdlp -MediaUrl $Url `
+                -SessionDir $sessionDir -PipeName $MpvPipeName -FormatSpec $formatSpec `
+                -Referer $Url -UserAgent $YtdlpUserAgent `
+                -CookieBrowser $YtdlpCookieBrowser -CookiesFile $YtdlpCookiesFile
+            $proc = $liveHandle.Main
+        } else {
+            $proc = Start-VodPlayer -MpvExe $mpv -YtdlpExe $ytdlp -MediaUrl $Url `
+                -SessionDir $sessionDir -PipeName $MpvPipeName -FormatSpec $formatSpec `
+                -Referer $Url -UserAgent $YtdlpUserAgent `
+                -CookieBrowser $YtdlpCookieBrowser -CookiesFile $YtdlpCookiesFile
+        }
+
+        Set-Content -LiteralPath $PidFile -Value "mpv=$($proc.Id)" -Encoding ASCII
+        Write-PlayState -MediaUrl $Url -IsLive:$isLive -PlayerPid $proc.Id
+
+        $proc.WaitForExit()
+        if ($null -ne $liveHandle) { Stop-LivePlayer $liveHandle }
+    } finally {
+        Stop-LivePlayer $liveHandle
+        $env:TEMP = $oldTemp
+        $env:TMP = $oldTmp
+        Remove-Item -LiteralPath $PidFile -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $StateFile -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $LinkFile -Force -ErrorAction SilentlyContinue
+        Remove-PlayCacheSession $sessionDir
+    }
+} catch {
+    Write-PlayError $_.Exception.Message
+    if (Get-Command Write-BiliDiagException -ErrorAction SilentlyContinue) {
+        Write-BiliDiagException -Category 'PLAY' -Context 'Start-StreamPlay failed' -ErrorRecord $_ -Script 'Start-StreamPlay'
+    }
+    throw
 }

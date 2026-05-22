@@ -1,5 +1,13 @@
-# Copy to config.ps1 and edit paths as needed.
+# Copy to config.ps1 and edit as needed.
 
+# $ShowConsole = $false
 # $YtdlpPath = 'C:\path\to\yt-dlp.exe'
-# $MpvPath = "$env:LOCALAPPDATA\Programs\mpv.net\mpvnet.exe"
-# $MpvCacheSecs = 300
+
+# Cookie：优先 runtime/bilibili-cookies.txt（点击时自动导出）
+# 也可手动指定 Netscape 格式 cookies.txt（须含 SESSDATA）：
+# $YtdlpCookiesFile = 'C:\path\to\bilibili.com.cookies.txt'
+# $YtdlpCookieBrowser = 'edge'   # 本窗口 Cookie 导出失败时，可读系统 Edge 登录态
+
+# 点播默认 format（登录后 yt-dlp 会自动选最高；也可写大会员优先链）：
+# $DefaultVodFormat = 'bestvideo+bestaudio/best'
+# $DefaultVodFormat = '100029+30280/100026+30280/bestvideo+bestaudio/best'

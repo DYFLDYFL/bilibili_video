@@ -1,0 +1,20 @@
+---
+description: 播放/Cookie/画质报错时先读 runtime/diag.log 再排查
+alwaysApply: true
+---
+
+# 诊断日志排查
+
+用户反馈播放失败、Cookie 导出失败、画质不可用、换画质失败等问题时：
+
+1. **先读取** `runtime/diag.log`（或运行 `Get-BiliDiagRecent -Lines 80`）
+2. 重点看 `[ERROR]`、`[WARN]`，以及最近的 `[COOKIE]`、`[PLAY]`、`[QUALITY]`、`[YTDLP]`
+3. 每条日志格式：`[时间] [级别] [分类] [脚本] 消息 | key=value`
+4. 结合 `runtime/bilibili-cookies.txt` 是否含 `SESSDATA` 判断登录态
+5. 再改代码或给建议，不要只看用户口述
+
+常见原因：
+
+- `COOKIE` + `Export exception`：WebView2 Cookie 写入失败（已修复 Netscape 格式写入）
+- `YTDLP`：yt-dlp 解析失败，检查 Cookie / 登录 / 网络
+- `QUALITY` + `无法连接 mpv`：播放器已关闭或 pipe 名不匹配
