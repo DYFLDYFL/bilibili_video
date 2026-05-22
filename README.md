@@ -21,7 +21,7 @@ saved/links.txt
 
 ## 启动
 
-双击 `打开网页.bat`，或：
+双击 **`打开网页.vbs`**（无终端黑窗），或：
 
 ```powershell
 .\Open-EdgeWeb.ps1
