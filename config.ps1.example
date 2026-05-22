@@ -1,0 +1,5 @@
+# Copy to config.ps1 and edit paths as needed.
+
+# $YtdlpPath = 'C:\path\to\yt-dlp.exe'
+# $MpvPath = "$env:LOCALAPPDATA\Programs\mpv.net\mpvnet.exe"
+# $MpvCacheSecs = 300

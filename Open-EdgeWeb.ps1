@@ -1,7 +1,7 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-  内嵌 Edge WebView2 浏览 B 站：链接在本窗口打开；点播/直播链接只保存不跳转。
+  内嵌 Edge WebView2 浏览 B 站；点播/直播链接不打开网页，临时保存后直接 mpv 流式播放。
 #>
 param(
     [string]$Url = 'https://www.bilibili.com',
@@ -12,8 +12,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $Root = $PSScriptRoot
 $Tools = Join-Path $Root 'tools\webview2'
-$SaveDir = Join-Path $Root 'saved'
-$SaveFile = Join-Path $SaveDir 'links.txt'
+$StreamScript = Join-Path $Root 'Start-StreamPlay.ps1'
+$LinkFile = Join-Path $Root 'runtime\current-link.txt'
 $PkgVer = '1.0.2903.40'
 $PkgUrl = "https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2/$PkgVer"
 
@@ -63,13 +63,10 @@ function Initialize-WebView2Environment {
         New-Item -ItemType Directory -Path $userDataFolder -Force | Out-Null
     }
 
-    # PowerShell 传 $null 给 .NET 的 string 参数会变成 PSObject，需显式转换
     [string]$loaderFolder = (Resolve-Path -LiteralPath $Tools).Path
     try {
         [Microsoft.Web.WebView2.Core.CoreWebView2Environment]::SetLoaderDllFolderPath($loaderFolder)
-    } catch {
-        # 旧版 SDK 无此方法时依赖 PATH
-    }
+    } catch { }
 
     $task = [Microsoft.Web.WebView2.Core.CoreWebView2Environment]::CreateAsync(
         '', $userDataFolder, $null)
@@ -84,14 +81,6 @@ function Test-MediaUrl([string]$raw) {
             $h -match 'live\.bilibili\.com/\d+' -or
             $h -match 'bilibili\.com/blive/' -or
             $h -match 'b23\.tv/')
-}
-
-function Save-MediaLink([string]$raw) {
-    try { $uri = ([Uri]$raw).AbsoluteUri } catch { $uri = $raw.Trim() }
-    New-Item -ItemType Directory -Path $SaveDir -Force | Out-Null
-    $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`t$uri"
-    Add-Content -Path $SaveFile -Value $line -Encoding UTF8
-    return $uri
 }
 
 function Get-ExceptionMessage([Exception]$ex) {
@@ -125,7 +114,7 @@ $script:HookJs = @'
     if (!a || !a.href || !isMedia(a.href)) return;
     e.preventDefault();
     e.stopImmediatePropagation();
-    chrome.webview.postMessage(JSON.stringify({ type: 'save', url: a.href }));
+    chrome.webview.postMessage(JSON.stringify({ type: 'play', url: a.href }));
   }, true);
 })();
 '@
@@ -166,16 +155,11 @@ $btnGo = New-Object System.Windows.Forms.Button
 $btnGo.Text = '前往'; $btnGo.Size = New-Object System.Drawing.Size(52, 24)
 $btnGo.Anchor = 'Top,Right'
 
-$btnOpenSave = New-Object System.Windows.Forms.Button
-$btnOpenSave.Text = '链接文件'
-$btnOpenSave.Size = New-Object System.Drawing.Size(72, 24)
-$btnOpenSave.Anchor = 'Top,Right'
-
 $status = New-Object System.Windows.Forms.Label
 $status.Dock = 'Bottom'
 $status.Height = 24
 $status.TextAlign = 'MiddleLeft'
-$status.Text = "点播/直播链接将保存到: $SaveFile"
+$status.Text = '点播/直播链接将用 mpv 流式播放，不在网页内打开'
 
 $web = [Activator]::CreateInstance([Microsoft.Web.WebView2.WinForms.WebView2])
 $web.Dock = 'Fill'
@@ -184,10 +168,21 @@ function Set-Status([string]$text) {
     $status.Text = $text
 }
 
-function Try-SaveMedia([string]$targetUrl) {
+function Start-StreamPlay([string]$targetUrl) {
     if (-not (Test-MediaUrl $targetUrl)) { return $false }
-    $saved = Save-MediaLink $targetUrl
-    Set-Status "已保存（未打开）: $saved"
+    if (-not (Test-Path -LiteralPath $StreamScript)) {
+        [System.Windows.Forms.MessageBox]::Show(
+            "未找到: $StreamScript", $form.Text, 'OK', 'Error') | Out-Null
+        return $true
+    }
+
+    try { $uri = ([Uri]$targetUrl).AbsoluteUri } catch { $uri = $targetUrl.Trim() }
+
+    Start-Process powershell.exe -WindowStyle Hidden -ArgumentList @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $StreamScript, '-Url', $uri
+    ) -WorkingDirectory $Root | Out-Null
+
+    Set-Status "正在流式播放: $uri"
     return $true
 }
 
@@ -195,7 +190,7 @@ function Navigate-To([string]$target) {
     [string]$t = $target.Trim()
     if ([string]::IsNullOrWhiteSpace($t)) { return }
     if ($t -notmatch '^\w+://') { $t = "https://$t" }
-    if (Try-SaveMedia $t) { return }
+    if (Start-StreamPlay $t) { return }
     $address.Text = $t
     Set-Status "正在加载: $t"
     if ($null -ne $web.CoreWebView2) {
@@ -207,15 +202,13 @@ function Navigate-To([string]$target) {
 
 function Update-Layout {
     $w = $form.ClientSize.Width
-    $btnOpenSave.Location = New-Object System.Drawing.Point(($w - 84), 8)
-    $btnGo.Location = New-Object System.Drawing.Point(($w - 144), 8)
-    $address.Width = $w - 380
+    $btnGo.Location = New-Object System.Drawing.Point(($w - 60), 8)
+    $address.Width = $w - 280
 }
 $form.Add_Resize({ Update-Layout })
 Update-Layout
 
-$toolbar.Controls.AddRange(@($btnBack, $btnFwd, $btnRefresh, $btnHome, $address, $btnGo, $btnOpenSave))
-# 先 Top/Bottom 再 Fill，否则 WebView 会占满整窗显示空白
+$toolbar.Controls.AddRange(@($btnBack, $btnFwd, $btnRefresh, $btnHome, $address, $btnGo))
 $form.Controls.Add($toolbar)
 $form.Controls.Add($status)
 $form.Controls.Add($web)
@@ -228,11 +221,6 @@ $btnHome.Add_Click({ Navigate-To 'https://www.bilibili.com' })
 $btnRefresh.Add_Click({ $web.Reload() })
 $btnBack.Add_Click({ if ($web.CanGoBack) { $web.GoBack() } })
 $btnFwd.Add_Click({ if ($web.CanGoForward) { $web.GoForward() } })
-$btnOpenSave.Add_Click({
-    New-Item -ItemType Directory -Path $SaveDir -Force | Out-Null
-    if (-not (Test-Path $SaveFile)) { New-Item -ItemType File -Path $SaveFile -Force | Out-Null }
-    Start-Process notepad.exe $SaveFile
-})
 
 $form.Add_Shown({
     $web.Add_CoreWebView2InitializationCompleted({
@@ -257,22 +245,22 @@ $form.Add_Shown({
         $core.add_NavigationStarting({
             param($s, $ev)
             [string]$navUri = $ev.Uri
-            if (Try-SaveMedia $navUri) { $ev.Cancel = $true }
+            if (Start-StreamPlay $navUri) { $ev.Cancel = $true }
         })
 
         $core.add_NewWindowRequested({
             param($s, $ev)
             $ev.Handled = $true
             [string]$newUri = $ev.Uri
-            if (-not (Try-SaveMedia $newUri)) { Navigate-To $newUri }
+            if (-not (Start-StreamPlay $newUri)) { Navigate-To $newUri }
         })
 
         $core.add_WebMessageReceived({
             param($s, $ev)
             try {
                 $msg = $ev.WebMessageAsJson | ConvertFrom-Json
-                if ($msg.type -eq 'save' -and $msg.url) {
-                    [void](Try-SaveMedia ([string]$msg.url))
+                if ($msg.url -and ($msg.type -eq 'play' -or $msg.type -eq 'save')) {
+                    [void](Start-StreamPlay ([string]$msg.url))
                 }
             } catch { }
         })
@@ -283,13 +271,12 @@ $form.Add_Shown({
             $btnFwd.Enabled = $web.CanGoForward
             if ($web.Source) { $address.Text = $web.Source.ToString() }
             if ($ev.IsSuccess) {
-                Set-Status "点播/直播链接将保存到: $SaveFile"
+                Set-Status '点播/直播链接将用 mpv 流式播放，不在网页内打开'
             } else {
                 Set-Status "加载失败 ($($ev.WebErrorStatus))，请点刷新重试"
             }
         })
 
-        # 先加载页面，再注入脚本（避免阻塞导航）
         Navigate-To $Url
         [void]$core.AddScriptToExecuteOnDocumentCreatedAsync([string]$script:HookJs)
     })

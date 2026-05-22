@@ -1,15 +1,14 @@
-# 本地配置（含路径、Cookie 等）
+# 本地配置（可选）
 config.ps1
 
-# 保存的链接
+# 旧版本遗留的本地链接
 saved/
 
-# 运行时 / 构建产物
+# 运行时临时文件（链接、缓冲、进程记录）
 runtime/
+
+# WebView2 SDK（首次运行下载）
 tools/webview2/
-bin/
-obj/
-*.exe
 
 # Windows
 Thumbs.db
