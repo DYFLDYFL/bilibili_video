@@ -1,6 +1,6 @@
 # B站 Edge 浏览器 + 流式播放
 
-**当前版本：v1.2** — 历史版本说明见 [VERSIONS.md](./VERSIONS.md)。
+**当前版本：v1.3** — 历史版本说明见 [VERSIONS.md](./VERSIONS.md)。
 
 内嵌 **Edge WebView2** 浏览 B 站；点播 / 直播链接由 **yt-dlp + mpv** 流式播放（Cookie + Referer，支持大会员高画质）。
 

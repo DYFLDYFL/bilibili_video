@@ -11,28 +11,28 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $Root = $PSScriptRoot
+$RuntimeDir = Join-Path $Root 'runtime'
 $Tools = Join-Path $Root 'tools\webview2'
 $StreamScript = Join-Path $Root 'Start-StreamPlay.ps1'
-$SwitchQualityScript = Join-Path $Root 'Switch-BiliQuality.ps1'
-$StateFile = Join-Path $Root 'runtime\play-state.json'
-$LinkFile = Join-Path $Root 'runtime\current-link.txt'
-$AutoCookiesFile = Join-Path $Root 'runtime\bilibili-cookies.txt'
+$StateFile = Join-Path $RuntimeDir 'play-state.json'
+$LinkFile = Join-Path $RuntimeDir 'current-link.txt'
+$AutoCookiesFile = Join-Path $RuntimeDir 'bilibili-cookies.txt'
 $FormatsScript = Join-Path $Root 'Bilibili-Formats.ps1'
 $ConfigPath = Join-Path $Root 'config.ps1'
+
 $YtdlpPath = $null
 $YtdlpCookiesFile = $null
 $YtdlpCookieBrowser = $null
 $YtdlpUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0'
 $ShowConsole = $false
 if (Test-Path -LiteralPath $ConfigPath) { . $ConfigPath }
-if (-not $YtdlpCookiesFile) {
-    $autoCookie = Join-Path $Root 'runtime\bilibili-cookies.txt'
-    if (Test-Path -LiteralPath $autoCookie) { $YtdlpCookiesFile = $autoCookie }
+if (-not $YtdlpCookiesFile -and (Test-Path -LiteralPath $AutoCookiesFile)) {
+    $YtdlpCookiesFile = $AutoCookiesFile
 }
 if (Test-Path -LiteralPath $FormatsScript) { . $FormatsScript }
-New-Item -ItemType Directory -Path (Join-Path $Root 'runtime') -Force | Out-Null
+New-Item -ItemType Directory -Path $RuntimeDir -Force | Out-Null
 if (Get-Command Set-BiliDiagLogPath -ErrorAction SilentlyContinue) {
-    Set-BiliDiagLogPath (Join-Path $Root 'runtime')
+    Set-BiliDiagLogPath $RuntimeDir
     Write-BiliDiagSession -ScriptName 'Open-EdgeWeb' -Meta @{ url = $Url }
 }
 $PkgVer = '1.0.2903.40'
@@ -195,7 +195,6 @@ function Get-WebViewMessage($ev) {
 
 $script:LastPlayUrl = ''
 $script:LastPlayAt = [datetime]::MinValue
-$script:LastQualityClick = [datetime]::MinValue
 $script:CookieSyncPending = $false
 $script:CookieSyncTimer = $null
 
@@ -214,6 +213,7 @@ function Sync-BiliCookiesNow {
 }
 
 function Request-BiliCookieSync {
+    # 后台延迟刷新 Cookie，不阻塞 UI。导航完成后调用一次以保持新鲜度。
     if ($null -eq $web.CoreWebView2) { return }
     if ($script:CookieSyncTimer) {
         $script:CookieSyncTimer.Stop()
@@ -228,27 +228,34 @@ function Request-BiliCookieSync {
         $script:CookieSyncTimer = $null
         if ($script:CookieSyncPending) { return }
         $script:CookieSyncPending = $true
-        try {
-            [void](Sync-BiliCookiesNow -TimeoutMs 4000)
-        } finally {
-            $script:CookieSyncPending = $false
-        }
+        try { [void](Sync-BiliCookiesNow -TimeoutMs 4000) }
+        finally { $script:CookieSyncPending = $false }
     })
     $script:CookieSyncTimer.Start()
+}
+
+function Ensure-FreshCookies {
+    # 智能 Cookie 同步策略：
+    #   - 文件新鲜（15 分钟内有 SESSDATA）→ 直接用，零延迟
+    #   - 文件存在但旧 → 异步刷新（不阻塞 UI）
+    #   - 文件不存在 → 同步阻塞导出一次（必要的"冷启动"成本）
+    if (Test-CookieFileFresh $AutoCookiesFile) { return }
+    if (Test-CookieFileHasSessdata $AutoCookiesFile) {
+        Request-BiliCookieSync
+        return
+    }
+    Set-Status '  首次同步登录 Cookie…'
+    $form.Refresh()
+    [void](Sync-BiliCookiesNow -TimeoutMs 3500)
 }
 
 function Start-StreamPlay([string]$targetUrl) {
     if (-not (Test-MediaUrl $targetUrl)) { return $false }
     if (-not (Test-Path -LiteralPath $StreamScript)) {
-        if (Get-Command Show-BiliUserError -ErrorAction SilentlyContinue) {
-            Show-BiliUserError -Title '播放失败' -Summary '找不到播放脚本。' -Details @(
-                "缺少文件：$StreamScript"
-                '请确认项目文件完整，或重新下载本项目。'
-            )
-        } else {
-            [System.Windows.Forms.MessageBox]::Show(
-                "未找到: $StreamScript", $form.Text, 'OK', 'Error') | Out-Null
-        }
+        Show-BiliUserError -Title '播放失败' -Summary '找不到播放脚本。' -Details @(
+            "缺少文件：$StreamScript"
+            '请确认项目文件完整，或重新下载本项目。'
+        )
         return $true
     }
 
@@ -261,9 +268,7 @@ function Start-StreamPlay([string]$targetUrl) {
     $script:LastPlayUrl = $uri
     $script:LastPlayAt = $now
 
-    Set-Status '  正在同步登录 Cookie…'
-    $form.Refresh()
-    [void](Sync-BiliCookiesNow -TimeoutMs 3000)
+    Ensure-FreshCookies
 
     Write-BiliDiag -Level 'INFO' -Category 'PLAY' -Message "Start stream: $uri"
     $psWindow = if ($ShowConsole) { 'Normal' } else { 'Hidden' }
@@ -275,6 +280,8 @@ function Start-StreamPlay([string]$targetUrl) {
     return $true
 }
 
+$script:QualitySwitchRunning = $false
+
 function Switch-CurrentQuality {
     if (-not (Test-Path -LiteralPath $StateFile)) {
         [System.Windows.Forms.MessageBox]::Show(
@@ -282,38 +289,62 @@ function Switch-CurrentQuality {
             $form.Text, 'OK', 'Information') | Out-Null
         return
     }
-    if (-not (Test-Path -LiteralPath $SwitchQualityScript)) {
-        [System.Windows.Forms.MessageBox]::Show(
-            "未找到: $SwitchQualityScript", $form.Text, 'OK', 'Error') | Out-Null
-        return
+    if ($script:QualitySwitchRunning) { return }
+    $script:QualitySwitchRunning = $true
+    Write-BiliDiag -Level 'INFO' -Category 'QUALITY' -Script 'Open-EdgeWeb' -Message 'Switch-CurrentQuality begin (inline)'
+
+    $busy = $null
+    try {
+        $state = Get-Content -LiteralPath $StateFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        $url = [string]$state.url
+        $pipeName = [string]$state.pipeName
+        $isLive = [bool]$state.isLive
+        if ([string]::IsNullOrWhiteSpace($url)) { throw '无法确定当前播放链接。' }
+
+        Ensure-FreshCookies
+
+        $ytdlp = Find-YtdlpExe -Override $YtdlpPath
+        if (-not $ytdlp) { throw '未找到 yt-dlp。请运行：winget install yt-dlp.yt-dlp' }
+
+        Set-Status '  正在获取画质列表…'
+        $form.Refresh()
+        $busy = Show-BiliBusyForm -Message '正在获取画质列表，请稍候…（约 3–10 秒）' -Title '换画质'
+
+        $info = Invoke-YtdlpJson -YtdlpExe $ytdlp -MediaUrl $url -Referer $url `
+            -UserAgent $YtdlpUserAgent `
+            -CookieBrowser $YtdlpCookieBrowser -CookiesFile $YtdlpCookiesFile -RuntimeDir $RuntimeDir
+
+        Close-BiliBusyForm $busy
+        $busy = $null
+
+        $choices = Build-FormatOptions -Info $info -IsLive:$isLive
+        $hint = Get-BiliQualityHint -Info $info -CookiesFile $YtdlpCookiesFile -RuntimeDir $RuntimeDir -IsLive:$isLive
+        $picked = Show-QualityPicker -Choices $choices -Title $info.title -LoginHint $hint
+        if (-not $picked) {
+            Write-BiliDiag -Level 'INFO' -Category 'QUALITY' -Script 'Open-EdgeWeb' -Message 'User cancelled picker'
+            Set-Status '  已取消'
+            return
+        }
+
+        Set-Status '  正在切换流…'
+        $form.Refresh()
+        $streams = Resolve-StreamUrls -YtdlpExe $ytdlp -MediaUrl $url -FormatSpec ([string]$picked.Format) `
+            -Referer $url -UserAgent $YtdlpUserAgent `
+            -CookieBrowser $YtdlpCookieBrowser -CookiesFile $YtdlpCookiesFile -RuntimeDir $RuntimeDir
+
+        Switch-MpvStreamQuality -PipeName $pipeName -StreamUrls $streams -Referrer $url -IsLive:$isLive
+        Set-Status "  已切换：$($picked.Label)"
+        Write-BiliDiag -Level 'INFO' -Category 'QUALITY' -Script 'Open-EdgeWeb' -Message "Switch OK: $($picked.Format)"
+    } catch {
+        Write-BiliDiagException -Category 'QUALITY' -Context 'Quality switch failed' -ErrorRecord $_ -Script 'Open-EdgeWeb'
+        Show-BiliUserError -Title '换画质失败' -Summary $_.Exception.Message -Details @(
+            '若提示无法连接 mpv，请确认 mpv 窗口仍在播放。'
+            '点击底栏「日志」查看详情。'
+        )
+    } finally {
+        Close-BiliBusyForm $busy
+        $script:QualitySwitchRunning = $false
     }
-
-    $now = Get-Date
-    if (($now - $script:LastQualityClick).TotalSeconds -lt 2) {
-        Set-Status '  画质窗口正在打开…'
-        return
-    }
-    $script:LastQualityClick = $now
-
-    Set-Status '  正在获取画质列表…'
-    $form.Refresh()
-
-    Set-Status '  正在同步登录 Cookie…'
-    $form.Refresh()
-    $cookieOk = Sync-BiliCookiesNow -TimeoutMs 5000
-    if (-not $cookieOk) {
-        $details = Get-CookieExportFailureMessage
-        Show-BiliUserError -Title 'Cookie 导出失败' -Summary (
-            '未能从本窗口导出 B 站登录 Cookie（SESSDATA），高画质可能不可用。'
-        ) -Details $details
-    }
-    Set-Status '  正在获取画质列表…'
-    $form.Refresh()
-
-    Write-BiliDiag -Level 'INFO' -Category 'QUALITY' -Message 'Launch Switch-BiliQuality.ps1'
-    Start-Process powershell.exe -WindowStyle Hidden -ArgumentList @(
-        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-STA', '-File', $SwitchQualityScript
-    ) -WorkingDirectory $Root | Out-Null
 }
 
 $btnQuality.Add_Click({

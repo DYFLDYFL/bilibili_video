@@ -44,8 +44,10 @@ if (-not $YtdlpCookiesFile) {
 }
 
 function Find-Executable {
-    param([string]$Name, [string]$Override, [string[]]$Fallbacks)
-    if ($Override -and (Test-Path -LiteralPath $Override)) { return (Resolve-Path -LiteralPath $Override).Path }
+    param([string]$Name, [string]$Override, [string[]]$Fallbacks = @())
+    if ($Override -and (Test-Path -LiteralPath $Override)) {
+        return (Resolve-Path -LiteralPath $Override).Path
+    }
     foreach ($p in $Fallbacks) {
         if ($p -and (Test-Path -LiteralPath $p)) { return (Resolve-Path -LiteralPath $p).Path }
     }

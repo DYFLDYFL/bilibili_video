@@ -248,6 +248,25 @@ function Test-CookieFileHasSessdata {
         (Select-String -LiteralPath $Path -Pattern 'SESSDATA' -Quiet))
 }
 
+function Test-CookieFileFresh {
+    param([string]$Path, [int]$MaxAgeMinutes = 15)
+    if (-not (Test-CookieFileHasSessdata $Path)) { return $false }
+    try {
+        $age = (Get-Date) - (Get-Item -LiteralPath $Path).LastWriteTime
+        return ($age.TotalMinutes -lt $MaxAgeMinutes)
+    } catch { return $false }
+}
+
+function Find-YtdlpExe {
+    param([string]$Override = $null)
+    if ($Override -and (Test-Path -LiteralPath $Override)) {
+        return (Resolve-Path -LiteralPath $Override).Path
+    }
+    $cmd = Get-Command yt-dlp -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    return $null
+}
+
 function Resolve-YtdlpCookiesFile {
     param(
         [string]$CookiesFile,
@@ -527,63 +546,41 @@ function Invoke-YtdlpJson {
         return ($json | ConvertFrom-Json)
     }
 
-    $bestInfo = $null
-    $bestHeight = -1
     $lastErr = $null
     $sets = @(Get-YtdlpCookieArgSets -CookieBrowser $CookieBrowser -CookiesFile $CookiesFile -RuntimeDir $RuntimeDir)
-    if ($sets.Count -eq 0) {
-        $sets = @([pscustomobject]@{ Args = @() })
-    }
+    if ($sets.Count -eq 0) { $sets = @([pscustomobject]@{ Args = @() }) }
+
     $triedBrowsers = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($entry in $sets) {
         $argStr = [string[]]$entry.Args -join ' '
         if ($argStr -match '--cookies-from-browser\s+(\S+)') { [void]$triedBrowsers.Add($Matches[1]) }
         try {
             $info = Invoke-Once ([string[]]$entry.Args)
-            $h = Get-InfoMaxVideoHeight $info
-            $count = if ($info.formats) { @($info.formats).Count } else { 0 }
-            Write-BiliDiag -Level 'INFO' -Category 'YTDLP' -Message ("Cookie set [{0}]: formats={1} maxH={2}" -f ($argStr -replace '^$','(none)'), $count, $h)
-            # Keep the first usable result. For live streams, height is often missing,
-            # so use format count as the primary "usable" signal.
-            if ($count -gt 0 -and ($h -gt $bestHeight -or $null -eq $bestInfo)) {
-                $bestHeight = $h
-                $bestInfo = $info
+            if ($info.formats -and @($info.formats).Count -gt 0) {
+                $maxH = Get-InfoMaxVideoHeight $info
+                Write-BiliDiag -Level 'INFO' -Category 'YTDLP' -Message ("OK: formats={0} maxH={1}" -f @($info.formats).Count, $maxH)
+                return $info
             }
-            if ($h -gt 480) { break }
         } catch { $lastErr = $_ }
     }
 
-    # If the first attempts already yielded a usable result (any formats), keep it.
-    # Browser-cookie fallback is only useful when nothing worked or the result is clearly capped at ≤ 480p.
-    $needFallback = ($null -eq $bestInfo) -or ($bestHeight -gt 0 -and $bestHeight -le 480)
-    if ($needFallback) {
-        foreach ($browser in @('edge', 'chrome', 'firefox')) {
-            if ($triedBrowsers.Contains($browser)) { continue }
-            [void]$triedBrowsers.Add($browser)
-            try {
-                Write-BiliDiag -Level 'INFO' -Category 'YTDLP' -Message "Fallback: --cookies-from-browser $browser"
-                $info = Invoke-Once @('--cookies-from-browser', $browser)
-                $h = Get-InfoMaxVideoHeight $info
-                $count = if ($info.formats) { @($info.formats).Count } else { 0 }
-                Write-BiliDiag -Level 'INFO' -Category 'YTDLP' -Message ("Browser fallback [$browser]: formats={0} maxH={1}" -f $count, $h)
-                if ($count -gt 0 -and ($h -gt $bestHeight -or $null -eq $bestInfo)) {
-                    $bestHeight = $h
-                    $bestInfo = $info
-                }
-                if ($h -gt 480) { break }
-            } catch {
-                Write-BiliDiag -Level 'WARN' -Category 'YTDLP' -Message ("Browser fallback [$browser] failed: {0}" -f $_.Exception.Message)
-            }
+    # Cookie-file 完全失败时再回退到系统浏览器（DPAPI 失败也无所谓）。
+    foreach ($browser in @('edge', 'chrome', 'firefox')) {
+        if ($triedBrowsers.Contains($browser)) { continue }
+        try {
+            Write-BiliDiag -Level 'INFO' -Category 'YTDLP' -Message "Fallback: --cookies-from-browser $browser"
+            $info = Invoke-Once @('--cookies-from-browser', $browser)
+            if ($info.formats -and @($info.formats).Count -gt 0) { return $info }
+        } catch {
+            Write-BiliDiag -Level 'WARN' -Category 'YTDLP' -Message ("Browser [$browser] failed: {0}" -f $_.Exception.Message)
         }
     }
 
-    if ($bestInfo) { return $bestInfo }
     if ($lastErr) {
         Write-BiliDiag -Category 'YTDLP' -Message ("Invoke-YtdlpJson fail: {0}" -f $lastErr.Exception.Message)
         throw $lastErr.Exception.Message
     }
-    Write-BiliDiag -Category 'YTDLP' -Message 'Invoke-YtdlpJson: no info returned'
-    throw '无法获取视频信息。请在本窗口登录 B 站后再试。'
+    throw '无法获取视频信息。请确认本窗口已登录 B 站，或网络可达 yt-dlp。'
 }
 
 function Get-VipTag([string]$Note) {
@@ -733,6 +730,22 @@ function Show-QualityPicker {
 
     if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return $null }
     return $Choices[$list.SelectedIndex]
+}
+
+function Get-BiliQualityHint {
+    param($Info, [string]$CookiesFile, [string]$RuntimeDir, [bool]$IsLive)
+    if ($IsLive) {
+        return '直播画质：原画/蓝光通常需登录或大会员。'
+    }
+    $maxH = Get-InfoMaxVideoHeight $Info
+    $cookiePath = Resolve-YtdlpCookiesFile -CookiesFile $CookiesFile -RuntimeDir $RuntimeDir
+    if ($maxH -gt 480) {
+        return '已识别登录态 Cookie，带 [会员/高画质] 标记的选项可用。'
+    }
+    if (-not $cookiePath) {
+        return '未导出 SESSDATA。请在本窗口登录 B 站后重试。'
+    }
+    return '本应用浏览器环境独立，可在 config.ps1 中设置 $YtdlpCookieBrowser = ''edge'' 直接读取系统 Edge Cookie。'
 }
 
 function Select-BilibiliFormat {
