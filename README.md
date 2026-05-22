@@ -1,6 +1,23 @@
-# Edge 网页窗口
+# B站 Edge 浏览器
 
-用本机 **Microsoft Edge** 以单窗口（`--app` 模式）打开网页，默认 B 站首页。
+内嵌 **Edge WebView2** 浏览 B 站，链接在本窗口打开，不会跳转到外部浏览器。
+
+## 点播 / 直播链接
+
+点击视频或直播间链接时**不会打开播放页**，而是把链接追加保存到：
+
+```
+saved/links.txt
+```
+
+每行格式：`时间<Tab>URL`。工具栏「链接文件」可用记事本查看。
+
+匹配的链接类型：
+
+- `https://www.bilibili.com/video/...`（点播）
+- `https://live.bilibili.com/...`（直播）
+- `https://www.bilibili.com/blive/...`
+- `https://b23.tv/...`（短链）
 
 ## 启动
 
@@ -11,8 +28,9 @@
 .\Open-EdgeWeb.ps1 -Url 'https://www.bilibili.com'
 ```
 
-## 说明
+首次运行会下载 WebView2 组件到 `tools\webview2\`（需联网）。
 
-- 使用系统已安装的 Edge，共享你的登录状态与扩展（与平时用 Edge 一致）
-- 不修改系统设置，不下载额外组件
-- 指定其他网址：`-Url 'https://example.com'`
+## 环境
+
+- Windows 10/11
+- 已安装 Microsoft Edge

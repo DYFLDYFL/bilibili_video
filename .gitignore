@@ -1,9 +1,12 @@
 # 本地配置（含路径、Cookie 等）
 config.ps1
 
+# 保存的链接
+saved/
+
 # 运行时 / 构建产物
 runtime/
-tools/webview2/*.dll
+tools/webview2/
 bin/
 obj/
 *.exe
