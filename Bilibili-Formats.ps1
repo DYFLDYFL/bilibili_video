@@ -528,7 +528,7 @@ function Invoke-YtdlpJson {
     }
 
     $bestInfo = $null
-    $bestHeight = 0
+    $bestHeight = -1
     $lastErr = $null
     $sets = @(Get-YtdlpCookieArgSets -CookieBrowser $CookieBrowser -CookiesFile $CookiesFile -RuntimeDir $RuntimeDir)
     if ($sets.Count -eq 0) {
@@ -541,24 +541,35 @@ function Invoke-YtdlpJson {
         try {
             $info = Invoke-Once ([string[]]$entry.Args)
             $h = Get-InfoMaxVideoHeight $info
-            Write-BiliDiag -Level 'INFO' -Category 'YTDLP' -Message ("Cookie set [{0}]: maxH={1}" -f ($argStr -replace '^$','(none)'), $h)
-            if ($h -gt $bestHeight) { $bestHeight = $h; $bestInfo = $info }
+            $count = if ($info.formats) { @($info.formats).Count } else { 0 }
+            Write-BiliDiag -Level 'INFO' -Category 'YTDLP' -Message ("Cookie set [{0}]: formats={1} maxH={2}" -f ($argStr -replace '^$','(none)'), $count, $h)
+            # Keep the first usable result. For live streams, height is often missing,
+            # so use format count as the primary "usable" signal.
+            if ($count -gt 0 -and ($h -gt $bestHeight -or $null -eq $bestInfo)) {
+                $bestHeight = $h
+                $bestInfo = $info
+            }
             if ($h -gt 480) { break }
         } catch { $lastErr = $_ }
     }
 
-    # Auto-fallback: when quality is still ≤ 480p, silently retry with the user's real Edge browser
-    # cookies, which carry proper 大会员 entitlements even if the in-app WebView2 profile doesn't.
-    if ($bestHeight -le 480) {
+    # If the first attempts already yielded a usable result (any formats), keep it.
+    # Browser-cookie fallback is only useful when nothing worked or the result is clearly capped at ≤ 480p.
+    $needFallback = ($null -eq $bestInfo) -or ($bestHeight -gt 0 -and $bestHeight -le 480)
+    if ($needFallback) {
         foreach ($browser in @('edge', 'chrome', 'firefox')) {
             if ($triedBrowsers.Contains($browser)) { continue }
             [void]$triedBrowsers.Add($browser)
             try {
-                Write-BiliDiag -Level 'INFO' -Category 'YTDLP' -Message "Low quality fallback: trying --cookies-from-browser $browser"
+                Write-BiliDiag -Level 'INFO' -Category 'YTDLP' -Message "Fallback: --cookies-from-browser $browser"
                 $info = Invoke-Once @('--cookies-from-browser', $browser)
                 $h = Get-InfoMaxVideoHeight $info
-                Write-BiliDiag -Level 'INFO' -Category 'YTDLP' -Message ("Browser fallback [$browser]: maxH={0}" -f $h)
-                if ($h -gt $bestHeight) { $bestHeight = $h; $bestInfo = $info }
+                $count = if ($info.formats) { @($info.formats).Count } else { 0 }
+                Write-BiliDiag -Level 'INFO' -Category 'YTDLP' -Message ("Browser fallback [$browser]: formats={0} maxH={1}" -f $count, $h)
+                if ($count -gt 0 -and ($h -gt $bestHeight -or $null -eq $bestInfo)) {
+                    $bestHeight = $h
+                    $bestInfo = $info
+                }
                 if ($h -gt 480) { break }
             } catch {
                 Write-BiliDiag -Level 'WARN' -Category 'YTDLP' -Message ("Browser fallback [$browser] failed: {0}" -f $_.Exception.Message)
@@ -592,13 +603,37 @@ function Build-FormatOptions {
     $list = New-Object System.Collections.Generic.List[object]
 
     if ($IsLive) {
-        $list.Add([pscustomobject]@{ Label = '自动（当前最高）'; Format = 'best[ext=flv]/best/best' })
-        foreach ($f in ($Info.formats | Where-Object { $_.format_id -and ($_.url -or $_.manifest_url) } |
-            Sort-Object @{ E = { $_.height } }, @{ E = { $_.tbr } } -Descending)) {
-            $label = if ($f.height) { '{0}p' -f $f.height } else { $f.format_note }
-            if (-not $label) { $label = $f.format_id }
+        $list.Add([pscustomobject]@{ Label = '自动（当前最高）'; Format = 'best[ext=flv]/best' })
+
+        # B 站直播 format_id 形如 `source-0`、`blue_ray-3`、`ultra_high_res-5`，
+        # 短横线后是 CDN 镜像编号，画质相同。按前缀分组，每组保留一份（取 tbr 最高的）。
+        $rankMap = @{
+            'source'         = 5
+            'blue_ray'       = 4
+            'ultra_high_res' = 3
+            'high'           = 2
+            'smooth'         = 1
+        }
+        $allFmts = @($Info.formats | Where-Object { $_.format_id -and ($_.url -or $_.manifest_url) })
+        $byPrefix = @{}
+        foreach ($f in $allFmts) {
+            $fid = [string]$f.format_id
+            $prefix = if ($fid -match '^(.+?)-\d+$') { $Matches[1] } else { $fid }
+            $tbr = if ([string]::IsNullOrWhiteSpace([string]$f.tbr)) { 0 } else { [double]$f.tbr }
+            if (-not $byPrefix.ContainsKey($prefix) -or $tbr -gt [double]$byPrefix[$prefix].Tbr) {
+                $byPrefix[$prefix] = [pscustomobject]@{ Fmt = $f; Tbr = $tbr; Prefix = $prefix }
+            }
+        }
+        $ordered = @($byPrefix.Values | Sort-Object @{
+            E = { if ($rankMap.ContainsKey($_.Prefix)) { $rankMap[$_.Prefix] } else { 0 } }
+            Descending = $true
+        }, @{ E = { $_.Tbr }; Descending = $true })
+
+        foreach ($g in $ordered) {
+            $f = $g.Fmt
+            $label = if ($f.format_note) { [string]$f.format_note } elseif ($f.height) { '{0}p' -f $f.height } else { $g.Prefix }
             $list.Add([pscustomobject]@{
-                Label  = ('{0}{1} ({2})' -f $label, (Get-VipTag $f.format_note), $f.format_id)
+                Label  = ('{0}{1} ({2})' -f $label, (Get-VipTag $f.format_note), $g.Prefix)
                 Format = [string]$f.format_id
             })
         }
