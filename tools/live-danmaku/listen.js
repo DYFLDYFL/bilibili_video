@@ -36,15 +36,42 @@ if (!outFile) {
 
 emit({ type: 'system', message: 'starting', roomId });
 
+let danmakuCount = 0;
+// Map<hash, expiryMs> — dedup identical danmaku within a short window.
+const recent = new Map();
+function dedupSeen(hash, ttlMs = 1500) {
+  const now = Date.now();
+  // Lazy cleanup
+  if (recent.size > 256) {
+    for (const [k, v] of recent) { if (v < now) recent.delete(k); }
+  }
+  const e = recent.get(hash);
+  if (e && e > now) return true;
+  recent.set(hash, now + ttlMs);
+  return false;
+}
+
 function onDanmu(data) {
   try {
     const info = (data && data.info) || [];
     const text = String(info[1] || '');
     if (!text) return;
-    const meta = info[0] || [];
-    const colorInt = (typeof meta[3] === 'number' && meta[3] > 0) ? meta[3] : 0xFFFFFF;
-    const hex = `#${colorInt.toString(16).padStart(6, '0').toUpperCase()}`;
+    // info[0] = [mode, fontsize, color, timestamp, ...]
+    const style = info[0] || [];
+    const colorInt = (typeof style[2] === 'number' && style[2] > 0) ? style[2] : 0xFFFFFF;
+    const hex = `#${(colorInt & 0xFFFFFF).toString(16).padStart(6, '0').toUpperCase()}`;
+    // info[2] = [uid, uname, ...]
+    const uid = (info[2] && info[2][0]) || 0;
+    const sendTs = (typeof style[4] === 'number') ? style[4] : 0;
+
+    const hash = `${uid}|${sendTs}|${text}`;
+    if (dedupSeen(hash)) return;
+
     emit({ type: 'danmaku', text, color: hex });
+    danmakuCount++;
+    if (danmakuCount % 20 === 0) {
+      emit({ type: 'system', message: `danmaku count: ${danmakuCount}` });
+    }
   } catch (e) {
     emit({ type: 'error', message: `parse DANMU_MSG: ${e.message}` });
   }
@@ -105,11 +132,8 @@ function onDanmu(data) {
     const msg = (e && e.message) ? e.message : String(e);
     emit({ type: 'error', message: `ws error: ${msg}` });
   });
-  live.addEventListener('DANMU_MSG', (ev) => onDanmu(ev.data || ev));
-  live.addEventListener('MESSAGE', (ev) => {
-    const data = ev.data;
-    if (data && data.cmd === 'DANMU_MSG') onDanmu(data);
-  });
+  // The library dispatches DANMU_MSG directly when cmd matches; listen there.
+  live.addEventListener('DANMU_MSG', (ev) => onDanmu(ev && ev.data));
 })();
 
 process.on('uncaughtException', (e) => {
@@ -119,7 +143,7 @@ process.on('unhandledRejection', (e) => {
   emit({ type: 'error', message: `unhandledRejection: ${e && e.message ? e.message : e}` });
 });
 
-// heartbeat: every 30s so the overlay can detect if node has died
+// heartbeat: every 20s so the overlay can detect if node has died
 setInterval(() => {
   emit({ type: 'system', message: 'heartbeat' });
-}, 30000).unref();
+}, 20000).unref();

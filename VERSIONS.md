@@ -4,7 +4,8 @@
 
 | 版本 | 说明 | 标签 | 分支 |
 |------|------|------|------|
-| **v1.3.3** | 当前：**直播弹幕 overlay（DeepSeek 部分可用）** | `v1.3.3` | `main` |
+| **v1.4** | 当前：**直播弹幕 overlay 改进** | `v1.4` | `main` |
+| **v1.3.3** | 直播弹幕（DeepSeek 部分可用） | `v1.3.3` | `release/1.3.3` |
 | **v1.3.2** | 维护补丁（`.gitignore`） | `v1.3.2` | `release/1.3.2` |
 | **v1.3.2extra** | 实验归档（弹幕初版，已并入 v1.3.3） | `v1.3.2extra` | `release/1.3.2extra` |
 | **v1.3.1** | 忽略 Poe MCP 本地文件 | `v1.3.1` | — |
@@ -15,7 +16,37 @@
 
 ---
 
-## v1.3.3 — 直播弹幕 overlay（DeepSeek 部分可用）（当前）
+## v1.4 — 直播弹幕 overlay 改进（当前）
+
+**适用场景：** v1.3.3 基础上，直播弹幕 **显示更多、跟窗更稳**（仍属实验功能）。
+
+**相比 v1.3.3 改进：**
+
+- overlay：`EnumWindows` 查找 mpv 主窗口，全屏/置顶时周期性重设 `HWND_TOPMOST`
+- 启动前最多等 5 秒 mpv 窗口就绪再挂 overlay
+- 修复 `listen.js` 弹幕颜色字段、去重、`DANMU_MSG` 事件监听
+- 可调 `$DanmakuRate`（秒/条，0=不限制）控制显示密度
+- overlay 就绪提示「弹幕已就绪，等待消息…」
+
+**限制：**
+
+- 仍为实验功能，高密度直播间可能卡顿或漏弹幕
+- 需 Node.js + `tools/live-danmaku/` 下 `npm install`
+
+**切换到 v1.4：**
+
+```powershell
+git fetch origin
+git checkout main
+git pull origin main
+# 或
+git checkout v1.4
+cd tools/live-danmaku && npm install
+```
+
+---
+
+## v1.3.3 — 直播弹幕 overlay（DeepSeek 部分可用）
 
 **适用场景：** v1.3.2 基础上，直播 mpv 播放时可显示 **少量弹幕**（实验性，尚不完善）。
 
@@ -241,7 +272,8 @@ git checkout v1.0
 ## 在 GitHub 上查看
 
 - 标签列表：<https://github.com/DYFLDYFL/bilibili_video/tags>
-- v1.3.3 代码：`git checkout v1.3.3` 或分支 `main`
+- v1.4 代码：`git checkout v1.4` 或分支 `main`
+- v1.3.3 代码：`git checkout v1.3.3` 或分支 `release/1.3.3`
 - v1.3.2 代码：`git checkout v1.3.2` 或分支 `release/1.3.2`
 - v1.3.2extra 初版归档：`git checkout v1.3.2extra` 或分支 `release/1.3.2extra`
 - v1.3.1 代码：`git checkout v1.3.1`

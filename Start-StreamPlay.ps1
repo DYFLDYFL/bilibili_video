@@ -32,6 +32,7 @@ $LiveCacheSecs = 20
 $DefaultVodFormat = 'bestvideo+bestaudio/best'
 $DefaultLiveFormat = 'best[ext=flv]/best/best'
 $DanmakuSpeed = 10.0
+$DanmakuRate = 0
 
 if (Test-Path $ConfigPath) { . $ConfigPath }
 if (Test-Path -LiteralPath $FormatsScript) { . $FormatsScript }
@@ -208,7 +209,8 @@ function Start-LiveDanmakuSidecar {
         '-File', $sidecar,
         '-RoomId', $RoomId,
         '-MpvPid', $MpvPid,
-        '-Speed', $DanmakuSpeed
+        '-Speed', $DanmakuSpeed,
+        '-Rate', $DanmakuRate
     )
     if ($YtdlpCookiesFile -and (Test-Path -LiteralPath $YtdlpCookiesFile)) {
         $argList += @('-CookiesFile', $YtdlpCookiesFile)
@@ -329,7 +331,16 @@ try {
                 Write-BiliDiagException -Category 'DANMAKU' -Context 'resolve roomId' -ErrorRecord $_ -Script 'Start-StreamPlay'
             }
             if ($liveRoomId) {
-                Start-Sleep -Milliseconds 800
+                # Wait up to 5s for mpv to create its main window so the overlay
+                # can attach to it; fall back to centered overlay if it never appears.
+                $waitStart = [DateTime]::UtcNow
+                while ((([DateTime]::UtcNow - $waitStart).TotalSeconds -lt 5)) {
+                    try {
+                        $alive = Get-Process -Id $proc.Id -ErrorAction SilentlyContinue
+                        if ($alive -and $alive.MainWindowHandle -ne [IntPtr]::Zero) { break }
+                    } catch { }
+                    Start-Sleep -Milliseconds 200
+                }
                 $danmakuPid = Start-LiveDanmakuSidecar -RoomId $liveRoomId -MpvPid $proc.Id
                 if ($danmakuPid) {
                     Add-Content -LiteralPath $PidFile -Value "danmaku=$danmakuPid" -Encoding ASCII
