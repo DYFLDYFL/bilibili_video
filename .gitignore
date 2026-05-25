@@ -1,13 +1,17 @@
-# 本地配置（可选）
+# 本地配置（Cookie 路径、控制台、yt-dlp 浏览器 Cookie 等）
 config.ps1
 
 # 旧版本遗留的本地链接
 saved/
 
-# 运行时临时文件（链接、缓冲、进程记录）
+# 运行时（bilibili-cookies.txt、diag.log、play-state.json、play.pid、播放缓冲等）
 runtime/
 
-# WebView2 SDK（首次运行下载）
+# Poe MCP（个人模型调用，与 B 站播放项目无关）
+.poe/
+.cursor/rules/poe-mcp-session.mdc
+
+# WebView2 SDK（首次运行自动下载）
 tools/webview2/
 
 # Windows
