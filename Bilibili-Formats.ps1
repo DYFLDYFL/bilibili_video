@@ -925,3 +925,43 @@ function Add-MpvStreamArgs {
     $MpvArgs += $StreamUrls[0]
     return $MpvArgs
 }
+
+function Get-BiliLiveRoomId {
+    [CmdletBinding(DefaultParameterSetName = 'ShortId')]
+    param(
+        [Parameter(ParameterSetName = 'ShortId', Mandatory)]
+        [string]$ShortId,
+        [Parameter(ParameterSetName = 'Url', Mandatory)]
+        [string]$Url
+    )
+
+    $sid = $null
+    if ($PSCmdlet.ParameterSetName -eq 'Url') {
+        if ($Url -match 'live\.bilibili\.com/(?:h5/|blanc/)?(\d+)') {
+            $sid = $Matches[1]
+        } else {
+            Write-BiliDiag -Level 'WARN' -Category 'DANMAKU' -Message "Get-BiliLiveRoomId: not a live url: $Url"
+            return $null
+        }
+    } else {
+        if ($ShortId -match '^\d+$') { $sid = $ShortId }
+        elseif ($ShortId -match '(\d+)') { $sid = $Matches[1] }
+        else { return $null }
+    }
+
+    try {
+        $api = "https://api.live.bilibili.com/room/v1/Room/room_init?id=$sid"
+        $resp = Invoke-RestMethod -Uri $api -UseBasicParsing -TimeoutSec 8 -Headers @{
+            'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'Referer'    = 'https://live.bilibili.com/'
+        }
+        if ($resp.code -eq 0 -and $resp.data -and $resp.data.room_id) {
+            Write-BiliDiag -Level 'INFO' -Category 'DANMAKU' -Message ("room_init: short={0} real={1}" -f $sid, $resp.data.room_id)
+            return [string]$resp.data.room_id
+        }
+        Write-BiliDiag -Level 'WARN' -Category 'DANMAKU' -Message ("room_init unexpected: code={0}" -f $resp.code)
+    } catch {
+        Write-BiliDiag -Level 'WARN' -Category 'DANMAKU' -Message ("room_init error: {0}" -f $_.Exception.Message)
+    }
+    return $sid
+}

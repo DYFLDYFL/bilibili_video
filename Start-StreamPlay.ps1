@@ -31,6 +31,7 @@ $MpvCacheSecs = 300
 $LiveCacheSecs = 20
 $DefaultVodFormat = 'bestvideo+bestaudio/best'
 $DefaultLiveFormat = 'best[ext=flv]/best/best'
+$DanmakuSpeed = 10.0
 
 if (Test-Path $ConfigPath) { . $ConfigPath }
 if (Test-Path -LiteralPath $FormatsScript) { . $FormatsScript }
@@ -93,12 +94,20 @@ function Stop-PreviousPlayer {
 }
 
 function Write-PlayState {
-    param([string]$MediaUrl, [bool]$IsLive, [int]$PlayerPid)
+    param(
+        [string]$MediaUrl,
+        [bool]$IsLive,
+        [int]$PlayerPid,
+        [string]$RoomId = '',
+        [bool]$DanmakuEnabled = $false
+    )
     $state = @{
-        url      = $MediaUrl
-        pipeName = $MpvPipeName
-        isLive   = $IsLive
-        playerPid = $PlayerPid
+        url            = $MediaUrl
+        pipeName       = $MpvPipeName
+        isLive         = $IsLive
+        playerPid      = $PlayerPid
+        roomId         = $RoomId
+        danmakuEnabled = $DanmakuEnabled
     }
     $state | ConvertTo-Json | Set-Content -LiteralPath $StateFile -Encoding UTF8
 }
@@ -176,6 +185,45 @@ function Stop-LivePlayer($LiveHandle) {
         if ($null -ne $proc -and -not $proc.HasExited) {
             try { $proc.Kill() } catch { }
         }
+    }
+}
+
+function Start-LiveDanmakuSidecar {
+    param(
+        [Parameter(Mandatory)]
+        [string]$RoomId,
+        [Parameter(Mandatory)]
+        [int]$MpvPid
+    )
+    $sidecar = Join-Path $Root 'Start-LiveDanmaku.ps1'
+    if (-not (Test-Path -LiteralPath $sidecar)) {
+        if (Get-Command Write-BiliDiag -ErrorAction SilentlyContinue) {
+            Write-BiliDiag -Level 'WARN' -Category 'DANMAKU' -Script 'Start-StreamPlay' -Message "sidecar missing: $sidecar"
+        }
+        return $null
+    }
+    $argList = @(
+        '-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass',
+        '-WindowStyle', 'Hidden',
+        '-File', $sidecar,
+        '-RoomId', $RoomId,
+        '-MpvPid', $MpvPid,
+        '-Speed', $DanmakuSpeed
+    )
+    if ($YtdlpCookiesFile -and (Test-Path -LiteralPath $YtdlpCookiesFile)) {
+        $argList += @('-CookiesFile', $YtdlpCookiesFile)
+    }
+    try {
+        $p = Start-Process -FilePath 'powershell.exe' -ArgumentList $argList -WindowStyle Hidden -PassThru
+        if (Get-Command Write-BiliDiag -ErrorAction SilentlyContinue) {
+            Write-BiliDiag -Level 'INFO' -Category 'DANMAKU' -Script 'Start-StreamPlay' -Message ("sidecar pid={0} roomId={1} mpv={2}" -f $p.Id, $RoomId, $MpvPid)
+        }
+        return $p.Id
+    } catch {
+        if (Get-Command Write-BiliDiagException -ErrorAction SilentlyContinue) {
+            Write-BiliDiagException -Category 'DANMAKU' -Context 'sidecar spawn failed' -ErrorRecord $_ -Script 'Start-StreamPlay'
+        }
+        return $null
     }
 }
 
@@ -268,7 +316,31 @@ try {
         }
 
         Set-Content -LiteralPath $PidFile -Value "mpv=$($proc.Id)" -Encoding ASCII
-        Write-PlayState -MediaUrl $Url -IsLive:$isLive -PlayerPid $proc.Id
+
+        $danmakuPid = $null
+        $liveRoomId = ''
+        if ($isLive) {
+            try {
+                if (Get-Command Get-BiliLiveRoomId -ErrorAction SilentlyContinue) {
+                    $resolved = Get-BiliLiveRoomId -Url $Url
+                    if ($resolved) { $liveRoomId = [string]$resolved }
+                }
+            } catch {
+                Write-BiliDiagException -Category 'DANMAKU' -Context 'resolve roomId' -ErrorRecord $_ -Script 'Start-StreamPlay'
+            }
+            if ($liveRoomId) {
+                Start-Sleep -Milliseconds 800
+                $danmakuPid = Start-LiveDanmakuSidecar -RoomId $liveRoomId -MpvPid $proc.Id
+                if ($danmakuPid) {
+                    Add-Content -LiteralPath $PidFile -Value "danmaku=$danmakuPid" -Encoding ASCII
+                }
+            } else {
+                Write-BiliDiag -Level 'WARN' -Category 'DANMAKU' -Script 'Start-StreamPlay' -Message 'no roomId resolved; skip sidecar'
+            }
+        }
+
+        Write-PlayState -MediaUrl $Url -IsLive:$isLive -PlayerPid $proc.Id `
+            -RoomId $liveRoomId -DanmakuEnabled:([bool]$danmakuPid)
 
         $proc.WaitForExit()
         if ($null -ne $liveHandle) { Stop-LivePlayer $liveHandle }

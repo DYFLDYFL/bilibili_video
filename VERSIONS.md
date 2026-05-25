@@ -4,7 +4,9 @@
 
 | 版本 | 说明 | 标签 | 分支 |
 |------|------|------|------|
-| **v1.3.2** | 当前：**维护补丁**（`.gitignore`） | `v1.3.2` | `main` |
+| **v1.3.3** | 当前：**直播弹幕 overlay（DeepSeek 部分可用）** | `v1.3.3` | `main` |
+| **v1.3.2** | 维护补丁（`.gitignore`） | `v1.3.2` | `release/1.3.2` |
+| **v1.3.2extra** | 实验归档（弹幕初版，已并入 v1.3.3） | `v1.3.2extra` | `release/1.3.2extra` |
 | **v1.3.1** | 忽略 Poe MCP 本地文件 | `v1.3.1` | — |
 | **v1.3** | 换画质加速 + 智能 Cookie | `v1.3` | `release/1.3` |
 | **v1.2** | 直播画质修复 | `v1.2` | `release/1.2` |
@@ -13,7 +15,68 @@
 
 ---
 
-## v1.3.2 — 维护补丁（当前）
+## v1.3.3 — 直播弹幕 overlay（DeepSeek 部分可用）（当前）
+
+**适用场景：** v1.3.2 基础上，直播 mpv 播放时可显示 **少量弹幕**（实验性，尚不完善）。
+
+**相比 v1.3.2 新增（DeepSeek 修改）：**
+
+- 直播自动启弹幕 sidecar：`Start-LiveDanmaku.ps1` + `Bilibili-DanmakuOverlay.ps1`
+- `tools/live-danmaku/listen.js`：Node 拉 B 站直播弹幕，JSONL 与 overlay 通信
+- overlay 修复：WinForms 线程异常、mpv 窗口 HWND 重绑、心跳超时检测
+- 可调弹幕滚动速度（`$DanmakuSpeed`，默认 10）
+- `Get-BiliLiveRoomId`：短号 → 真实 room_id
+
+**限制：**
+
+- **仅能显示部分弹幕**，稳定性/同步/密度均未达可用产品级
+- 需 **Node.js**；首次在 `tools/live-danmaku/` 执行 `npm install`
+- 仅 **直播**；点播无弹幕
+
+**切换到 v1.3.3：**
+
+```powershell
+git fetch origin
+git checkout main
+git pull origin main
+# 或
+git checkout v1.3.3
+cd tools/live-danmaku && npm install
+```
+
+---
+
+## v1.3.2extra — 实验归档（弹幕初版）
+
+> 已并入 **v1.3.3**；保留分支供对比初版失败实现。
+
+**状态：** 在 v1.3.2 基础上首次尝试直播弹幕 overlay，**未能正常工作**。
+
+**尝试内容：**
+
+- `Start-LiveDanmaku.ps1` + `Bilibili-DanmakuOverlay.ps1`：Node 拉取直播弹幕 + WinForms 透明悬浮窗叠在 mpv 上
+- `tools/live-danmaku/`：`listen.js`（`bilibili-live-danmaku`）经 JSONL 文件与 overlay 通信
+- `Start-StreamPlay.ps1`：直播开播后自动启动弹幕 sidecar
+- `Get-BiliLiveRoomId`（`Bilibili-Formats.ps1`）：短号解析为真实 `room_id`
+
+**失败 / 未稳定：**
+
+- overlay 与 mpv 窗口跟随、弹幕绘制、WebSocket 连接等未达可用状态
+- 依赖 Node.js；需在 `tools/live-danmaku/` 执行 `npm install`
+
+**切换到 v1.3.2extra（仅查阅实验代码）：**
+
+```powershell
+git fetch origin
+git checkout release/1.3.2extra
+# 或
+git checkout v1.3.2extra
+cd tools/live-danmaku && npm install
+```
+
+---
+
+## v1.3.2 — 维护补丁
 
 **适用场景：** 与 v1.3.1 功能相同，仅仓库维护调整。
 
@@ -178,7 +241,9 @@ git checkout v1.0
 ## 在 GitHub 上查看
 
 - 标签列表：<https://github.com/DYFLDYFL/bilibili_video/tags>
-- v1.3.2 代码：`git checkout v1.3.2` 或分支 `main`
+- v1.3.3 代码：`git checkout v1.3.3` 或分支 `main`
+- v1.3.2 代码：`git checkout v1.3.2` 或分支 `release/1.3.2`
+- v1.3.2extra 初版归档：`git checkout v1.3.2extra` 或分支 `release/1.3.2extra`
 - v1.3.1 代码：`git checkout v1.3.1`
 - v1.3 代码：`git checkout v1.3` 或分支 `release/1.3`
 - v1.2 代码：`git checkout v1.2` 或分支 `release/1.2`
