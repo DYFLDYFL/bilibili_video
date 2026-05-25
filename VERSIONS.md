@@ -5,7 +5,7 @@
 | 版本 | 说明 | 标签 | 分支 |
 |------|------|------|------|
 | **v1.3.2** | 当前推荐：**维护补丁**（`.gitignore`） | `v1.3.2` | `main` |
-| **v1.3.1extra** | **实验归档**：直播弹幕 overlay（**未完成/失败**） | `v1.3.1extra` | `release/1.3.1extra` |
+| **v1.3.2extra** | **实验归档**：直播弹幕 overlay（**未完成/失败**） | `v1.3.2extra` | `release/1.3.2extra` |
 | **v1.3.1** | 忽略 Poe MCP 本地文件 | `v1.3.1` | — |
 | **v1.3** | 换画质加速 + 智能 Cookie | `v1.3` | `release/1.3` |
 | **v1.2** | 直播画质修复 | `v1.2` | `release/1.2` |
@@ -14,11 +14,11 @@
 
 ---
 
-## v1.3.1extra — 实验归档（弹幕功能失败）
+## v1.3.2extra — 实验归档（弹幕功能失败）
 
 > **勿用于日常。** 日常使用请留在 `main`（**v1.3.2**）。
 
-**状态：** 在 v1.3.1 基础上尝试新增 **直播弹幕 overlay**，**未能正常工作**，仅作代码存档备查。
+**状态：** 在 v1.3.2 基础上尝试新增 **直播弹幕 overlay**，**未能正常工作**，仅作代码存档备查。
 
 **尝试内容：**
 
@@ -32,13 +32,13 @@
 - overlay 与 mpv 窗口跟随、弹幕绘制、WebSocket 连接等未达可用状态
 - 依赖 Node.js；需在 `tools/live-danmaku/` 执行 `npm install`
 
-**切换到 v1.3.1extra（仅查阅实验代码）：**
+**切换到 v1.3.2extra（仅查阅实验代码）：**
 
 ```powershell
 git fetch origin
-git checkout release/1.3.1extra
+git checkout release/1.3.2extra
 # 或
-git checkout v1.3.1extra
+git checkout v1.3.2extra
 cd tools/live-danmaku && npm install
 ```
 
@@ -210,7 +210,7 @@ git checkout v1.0
 
 - 标签列表：<https://github.com/DYFLDYFL/bilibili_video/tags>
 - v1.3.2 代码：`git checkout v1.3.2` 或分支 `main`
-- v1.3.1extra 实验归档：`git checkout v1.3.1extra` 或分支 `release/1.3.1extra`（弹幕失败，勿日常使用）
+- v1.3.2extra 实验归档：`git checkout v1.3.2extra` 或分支 `release/1.3.2extra`（弹幕失败，勿日常使用）
 - v1.3.1 代码：`git checkout v1.3.1`
 - v1.3 代码：`git checkout v1.3` 或分支 `release/1.3`
 - v1.2 代码：`git checkout v1.2` 或分支 `release/1.2`
