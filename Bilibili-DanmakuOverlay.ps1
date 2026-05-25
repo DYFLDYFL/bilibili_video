@@ -68,7 +68,8 @@ function Start-DanmakuOverlay {
         [string]$OutFile,
         [int]$MpvPid = 0,
         [float]$Speed = 10.0,
-        [float]$Rate = 0
+        [float]$Rate = 0,
+        [string]$Color = ''
     )
 
     if (Get-Command Write-BiliDiag -ErrorAction SilentlyContinue) {
@@ -127,6 +128,7 @@ function Start-DanmakuOverlay {
         TickCount         = 0
         LastDanmakuTick   = 0
         RateTicks         = [int]($Rate * 25)
+        OverrideColor     = $(if ($Color) { $colorObj = [System.Drawing.Color]::White; try { $hex = $Color.TrimStart('#'); $r = [Convert]::ToInt32($hex.Substring(0,2), 16); $gv = [Convert]::ToInt32($hex.Substring(2,2), 16); $b = [Convert]::ToInt32($hex.Substring(4,2), 16); [System.Drawing.Color]::FromArgb(255, $r, $gv, $b) } catch { $null } } else { $null })
         MpvMissingTicks   = 0
         TopmostEveryTicks = 25  # re-assert topmost every ~1s
     }
@@ -256,15 +258,19 @@ function Start-DanmakuOverlay {
                     $t = [string]$obj.type
                     if ($t -eq 'danmaku') {
                         $color = [System.Drawing.Color]::White
-                        try {
-                            $hex = [string]$obj.color
-                            if ($hex -and $hex.StartsWith('#') -and $hex.Length -ge 7) {
-                                $r = [Convert]::ToInt32($hex.Substring(1, 2), 16)
-                                $gv = [Convert]::ToInt32($hex.Substring(3, 2), 16)
-                                $b = [Convert]::ToInt32($hex.Substring(5, 2), 16)
-                                $color = [System.Drawing.Color]::FromArgb(255, $r, $gv, $b)
-                            }
-                        } catch { }
+                        if ($st2.OverrideColor) {
+                            $color = $st2.OverrideColor
+                        } else {
+                            try {
+                                $hex = [string]$obj.color
+                                if ($hex -and $hex.StartsWith('#') -and $hex.Length -ge 7) {
+                                    $r = [Convert]::ToInt32($hex.Substring(1, 2), 16)
+                                    $gv = [Convert]::ToInt32($hex.Substring(3, 2), 16)
+                                    $b = [Convert]::ToInt32($hex.Substring(5, 2), 16)
+                                    $color = [System.Drawing.Color]::FromArgb(255, $r, $gv, $b)
+                                }
+                            } catch { }
+                        }
                         $text = [string]$obj.text
                         if (-not $text) { continue }
 

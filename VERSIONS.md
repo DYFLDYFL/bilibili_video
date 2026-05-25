@@ -4,7 +4,8 @@
 
 | 版本 | 说明 | 标签 | 分支 |
 |------|------|------|------|
-| **v1.4** | 当前：**直播弹幕 overlay 改进** | `v1.4` | `main` |
+| **v1.4.1** | 当前：**白色弹幕**（统一颜色） | `v1.4.1` | `main` |
+| **v1.4** | 直播弹幕 overlay 改进 | `v1.4` | `release/1.4` |
 | **v1.3.3** | 直播弹幕（DeepSeek 部分可用） | `v1.3.3` | `release/1.3.3` |
 | **v1.3.2** | 维护补丁（`.gitignore`） | `v1.3.2` | `release/1.3.2` |
 | **v1.3.2extra** | 实验归档（弹幕初版，已并入 v1.3.3） | `v1.3.2extra` | `release/1.3.2extra` |
@@ -16,7 +17,29 @@
 
 ---
 
-## v1.4 — 直播弹幕 overlay 改进（当前）
+## v1.4.1 — 白色弹幕（当前）
+
+**适用场景：** v1.4 基础上，可将直播弹幕 **统一为白色**（或任意 `#RRGGBB` 颜色）。
+
+**相比 v1.4 新增：**
+
+- `config.ps1` 新增 `$DanmakuColor`：设为非空时 overlay **忽略 B 站原色**，全部用指定颜色
+- 白色弹幕示例：`$DanmakuColor = '#FFFFFF'`
+- 留空 `''` 则仍使用 B 站原始弹幕颜色
+
+**切换到 v1.4.1：**
+
+```powershell
+git fetch origin
+git checkout main
+git pull origin main
+# 或
+git checkout v1.4.1
+```
+
+---
+
+## v1.4 — 直播弹幕 overlay 改进
 
 **适用场景：** v1.3.3 基础上，直播弹幕 **显示更多、跟窗更稳**（仍属实验功能）。
 
@@ -272,7 +295,8 @@ git checkout v1.0
 ## 在 GitHub 上查看
 
 - 标签列表：<https://github.com/DYFLDYFL/bilibili_video/tags>
-- v1.4 代码：`git checkout v1.4` 或分支 `main`
+- v1.4.1 代码：`git checkout v1.4.1` 或分支 `main`
+- v1.4 代码：`git checkout v1.4` 或分支 `release/1.4`
 - v1.3.3 代码：`git checkout v1.3.3` 或分支 `release/1.3.3`
 - v1.3.2 代码：`git checkout v1.3.2` 或分支 `release/1.3.2`
 - v1.3.2extra 初版归档：`git checkout v1.3.2extra` 或分支 `release/1.3.2extra`

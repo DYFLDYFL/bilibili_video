@@ -9,7 +9,8 @@ param(
     [int]$MpvPid = 0,
     [string]$CookiesFile = '',
     [float]$Speed = 10.0,
-    [float]$Rate = 0
+    [float]$Rate = 0,
+    [string]$Color = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -62,7 +63,7 @@ try {
 }
 
 try {
-    Start-DanmakuOverlay -OutFile $outFile -MpvPid $MpvPid -Speed $Speed -Rate $Rate
+    Start-DanmakuOverlay -OutFile $outFile -MpvPid $MpvPid -Speed $Speed -Rate $Rate -Color $Color
 } catch {
     Write-BiliDiagException -Category 'DANMAKU' -Context 'overlay crashed' -ErrorRecord $_
 } finally {

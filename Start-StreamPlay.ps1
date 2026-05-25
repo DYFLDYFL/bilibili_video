@@ -33,6 +33,7 @@ $DefaultVodFormat = 'bestvideo+bestaudio/best'
 $DefaultLiveFormat = 'best[ext=flv]/best/best'
 $DanmakuSpeed = 10.0
 $DanmakuRate = 0
+$DanmakuColor = ''
 
 if (Test-Path $ConfigPath) { . $ConfigPath }
 if (Test-Path -LiteralPath $FormatsScript) { . $FormatsScript }
@@ -212,6 +213,7 @@ function Start-LiveDanmakuSidecar {
         '-Speed', $DanmakuSpeed,
         '-Rate', $DanmakuRate
     )
+    if ($DanmakuColor) { $argList += @('-Color', $DanmakuColor) }
     if ($YtdlpCookiesFile -and (Test-Path -LiteralPath $YtdlpCookiesFile)) {
         $argList += @('-CookiesFile', $YtdlpCookiesFile)
     }

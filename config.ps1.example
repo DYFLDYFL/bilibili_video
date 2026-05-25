@@ -19,3 +19,6 @@
 # $DanmakuSpeed = 10
 # 弹幕出现频率（秒/条，0=不限制；比如 3 表示至少间隔 3 秒才显示下一条）
 # $DanmakuRate = 0
+# 弹幕颜色（#RRGGBB，留空=使用B站原始颜色；设了就全部统一）
+# $DanmakuColor = '#FFFFFF'   # 白色弹幕
+# $DanmakuColor = '#FF6B6B'
