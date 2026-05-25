@@ -4,7 +4,8 @@
 
 | 版本 | 说明 | 标签 | 分支 |
 |------|------|------|------|
-| **v1.3.1** | 当前：**维护补丁**（`.gitignore`） | `v1.3.1` | `main` |
+| **v1.3.2** | 当前：**维护补丁**（`.gitignore`） | `v1.3.2` | `main` |
+| **v1.3.1** | 忽略 Poe MCP 本地文件 | `v1.3.1` | — |
 | **v1.3** | 换画质加速 + 智能 Cookie | `v1.3` | `release/1.3` |
 | **v1.2** | 直播画质修复 | `v1.2` | `release/1.2` |
 | **v1.1** | 高画质 / 大会员流式 | `v1.1` | `release/1.1` |
@@ -12,7 +13,27 @@
 
 ---
 
-## v1.3.1 — 维护补丁（当前）
+## v1.3.2 — 维护补丁（当前）
+
+**适用场景：** 与 v1.3.1 功能相同，仅仓库维护调整。
+
+**相比 v1.3.1 变更：**
+
+- `.gitignore` 改为忽略整个 `tools/`（含 WebView2 SDK 等本地下载内容，避免 IDE 绿点提示）
+
+**切换到 v1.3.2：**
+
+```powershell
+git fetch origin
+git checkout main
+git pull origin main
+# 或固定到标签
+git checkout v1.3.2
+```
+
+---
+
+## v1.3.1 — 维护补丁
 
 **适用场景：** 与 v1.3 功能相同，仅仓库维护调整。
 
@@ -157,7 +178,8 @@ git checkout v1.0
 ## 在 GitHub 上查看
 
 - 标签列表：<https://github.com/DYFLDYFL/bilibili_video/tags>
-- v1.3.1 代码：`git checkout v1.3.1` 或分支 `main`
+- v1.3.2 代码：`git checkout v1.3.2` 或分支 `main`
+- v1.3.1 代码：`git checkout v1.3.1`
 - v1.3 代码：`git checkout v1.3` 或分支 `release/1.3`
 - v1.2 代码：`git checkout v1.2` 或分支 `release/1.2`
 - v1.1 代码：`git checkout v1.1` 或分支 `release/1.1`

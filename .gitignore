@@ -11,8 +11,8 @@ runtime/
 .poe/
 .cursor/rules/poe-mcp-session.mdc
 
-# WebView2 SDK（首次运行自动下载）
-tools/webview2/
+# 本地工具（WebView2 SDK 等，首次运行自动下载）
+tools/
 
 # Windows
 Thumbs.db
