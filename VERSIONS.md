@@ -4,14 +4,35 @@
 
 | 版本 | 说明 | 标签 | 分支 |
 |------|------|------|------|
-| **v1.3** | 当前推荐：**换画质加速 + 智能 Cookie** | `v1.3` | `main`、`release/1.3` |
+| **v1.3.1** | 当前：**维护补丁**（`.gitignore`） | `v1.3.1` | `main` |
+| **v1.3** | 换画质加速 + 智能 Cookie | `v1.3` | `release/1.3` |
 | **v1.2** | 直播画质修复 | `v1.2` | `release/1.2` |
 | **v1.1** | 高画质 / 大会员流式 | `v1.1` | `release/1.1` |
 | **v1.0** | 历史版：基础流式播放，**无**大会员高画质能力 | `v1.0` | `release/1.0` |
 
 ---
 
-## v1.3 — 换画质加速 + 智能 Cookie（当前）
+## v1.3.1 — 维护补丁（当前）
+
+**适用场景：** 与 v1.3 功能相同，仅仓库维护调整。
+
+**相比 v1.3 变更：**
+
+- `.gitignore` 忽略 `.poe/` 与 `poe-mcp-session.mdc`（个人 Poe 模型调用，与播放项目无关）
+
+**切换到 v1.3.1：**
+
+```powershell
+git fetch origin
+git checkout main
+git pull origin main
+# 或固定到标签
+git checkout v1.3.1
+```
+
+---
+
+## v1.3 — 换画质加速 + 智能 Cookie
 
 **适用场景：** v1.2 基础上，减少点播放/换画质时的等待，换画质响应更快。
 
@@ -136,7 +157,8 @@ git checkout v1.0
 ## 在 GitHub 上查看
 
 - 标签列表：<https://github.com/DYFLDYFL/bilibili_video/tags>
-- v1.3 代码：`git checkout v1.3` 或分支 `main`
+- v1.3.1 代码：`git checkout v1.3.1` 或分支 `main`
+- v1.3 代码：`git checkout v1.3` 或分支 `release/1.3`
 - v1.2 代码：`git checkout v1.2` 或分支 `release/1.2`
 - v1.1 代码：`git checkout v1.1` 或分支 `release/1.1`
 - v1.0 代码：`git checkout v1.0` 或分支 `release/1.0`
