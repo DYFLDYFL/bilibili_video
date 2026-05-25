@@ -1,0 +1,9 @@
+{
+  "name": "live-danmaku-listener",
+  "version": "1.0.0",
+  "private": true,
+  "main": "listen.js",
+  "dependencies": {
+    "bilibili-live-danmaku": "^0.7.15"
+  }
+}

@@ -6,13 +6,15 @@ saved/
 
 # 运行时（bilibili-cookies.txt、diag.log、play-state.json、play.pid、播放缓冲等）
 runtime/
+runtime/danmaku-*.jsonl
 
 # Poe MCP（个人模型调用，与 B 站播放项目无关）
 .poe/
 .cursor/rules/poe-mcp-session.mdc
 
-# 本地工具（WebView2 SDK 等，首次运行自动下载）
-tools/
+# 本地工具
+tools/webview2/
+tools/live-danmaku/node_modules/
 
 # Windows
 Thumbs.db
