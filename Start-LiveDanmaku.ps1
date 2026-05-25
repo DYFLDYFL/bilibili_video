@@ -7,7 +7,8 @@ param(
     [Parameter(Mandatory)]
     [string]$RoomId,
     [int]$MpvPid = 0,
-    [string]$CookiesFile = ''
+    [string]$CookiesFile = '',
+    [float]$Speed = 10.0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -60,7 +61,7 @@ try {
 }
 
 try {
-    Start-DanmakuOverlay -OutFile $outFile -MpvPid $MpvPid
+    Start-DanmakuOverlay -OutFile $outFile -MpvPid $MpvPid -Speed $Speed
 } catch {
     Write-BiliDiagException -Category 'DANMAKU' -Context 'overlay crashed' -ErrorRecord $_
 } finally {

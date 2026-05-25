@@ -31,6 +31,7 @@ $MpvCacheSecs = 300
 $LiveCacheSecs = 20
 $DefaultVodFormat = 'bestvideo+bestaudio/best'
 $DefaultLiveFormat = 'best[ext=flv]/best/best'
+$DanmakuSpeed = 10.0
 
 if (Test-Path $ConfigPath) { . $ConfigPath }
 if (Test-Path -LiteralPath $FormatsScript) { . $FormatsScript }
@@ -206,7 +207,8 @@ function Start-LiveDanmakuSidecar {
         '-WindowStyle', 'Hidden',
         '-File', $sidecar,
         '-RoomId', $RoomId,
-        '-MpvPid', $MpvPid
+        '-MpvPid', $MpvPid,
+        '-Speed', $DanmakuSpeed
     )
     if ($YtdlpCookiesFile -and (Test-Path -LiteralPath $YtdlpCookiesFile)) {
         $argList += @('-CookiesFile', $YtdlpCookiesFile)

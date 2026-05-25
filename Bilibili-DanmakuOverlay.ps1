@@ -26,13 +26,19 @@ function Start-DanmakuOverlay {
     param(
         [Parameter(Mandatory)]
         [string]$OutFile,
-        [int]$MpvPid = 0
+        [int]$MpvPid = 0,
+        [float]$Speed = 10.0
     )
 
     if (Get-Command Write-BiliDiag -ErrorAction SilentlyContinue) {
         Write-BiliDiag -Level 'INFO' -Category 'DANMAKU' -Script 'Overlay' -Message ("Start-DanmakuOverlay MpvPid={0} OutFile={1}" -f $MpvPid, $OutFile)
     }
 
+    # Must call SetUnhandledExceptionMode BEFORE EnableVisualStyles()
+    # to avoid "只要在线程上创建了任何控件，则线程异常模式将不能再有任何更改"
+    try {
+        [System.Windows.Forms.Application]::SetUnhandledExceptionMode('Automatic')
+    } catch { }
     [System.Windows.Forms.Application]::EnableVisualStyles()
 
     $fs = [System.IO.File]::Open(
@@ -65,9 +71,11 @@ function Start-DanmakuOverlay {
         LaneHeight = 38
         LaneCount  = 12
         NextLane   = 0
-        Speed      = 4.0
+        Speed      = $Speed
         Timer      = $null
         Measure    = (New-Object System.Drawing.Bitmap 1, 1)
+        LastDataTick = 0
+        TickCount    = 0
     }
     $form.Tag = $state
 
@@ -93,7 +101,7 @@ function Start-DanmakuOverlay {
         if ($st.MpvPid -gt 0) {
             try {
                 $p = Get-Process -Id $st.MpvPid -ErrorAction SilentlyContinue
-                if ($p) { $st.MpvHwnd = $p.MainWindowHandle }
+                if ($p) { $st.MpvHwnd = [IntPtr]$p.MainWindowHandle }
             } catch { }
         }
 
@@ -103,15 +111,24 @@ function Start-DanmakuOverlay {
             $form2 = $this.Tag
             $st2 = $form2.Tag
 
+            $st2.TickCount++
+
             if ($st2.MpvPid -gt 0) {
-                $alive = Get-Process -Id $st2.MpvPid -ErrorAction SilentlyContinue
-                if (-not $alive) { $form2.Close(); return }
-                if ($st2.MpvHwnd -eq [IntPtr]::Zero -or -not [BiliWin32]::IsWindow($st2.MpvHwnd)) {
-                    try { $st2.MpvHwnd = $alive.MainWindowHandle } catch { }
+                $hwndOk = $false
+                try { $hwndOk = ($st2.MpvHwnd -and [BiliWin32]::IsWindow($st2.MpvHwnd)) } catch { }
+                if (-not $hwndOk) {
+                    # HWND not resolved or mpv window gone — try to re-resolve
+                    try {
+                        $alive = Get-Process -Id $st2.MpvPid -ErrorAction SilentlyContinue
+                        if (-not $alive) { $form2.Close(); return }
+                        $st2.MpvHwnd = [IntPtr]$alive.MainWindowHandle
+                    } catch { }
                 }
             }
 
-            if ($st2.MpvHwnd -ne [IntPtr]::Zero -and [BiliWin32]::IsWindow($st2.MpvHwnd) -and [BiliWin32]::IsWindowVisible($st2.MpvHwnd)) {
+            $syncOk = $false
+            try { $syncOk = ($st2.MpvHwnd -and [BiliWin32]::IsWindow($st2.MpvHwnd) -and [BiliWin32]::IsWindowVisible($st2.MpvHwnd)) } catch { }
+            if ($syncOk) {
                 $rc = New-Object BiliWin32+RECT
                 if ([BiliWin32]::GetWindowRect($st2.MpvHwnd, [ref]$rc)) {
                     $w = $rc.Right - $rc.Left
@@ -130,6 +147,7 @@ function Start-DanmakuOverlay {
                     $line = $st2.Reader.ReadLine()
                     if ([string]::IsNullOrWhiteSpace($line)) { break }
                     $drained++
+                    $st2.LastDataTick = $st2.TickCount
                     try { $obj = $line | ConvertFrom-Json -ErrorAction Stop } catch { continue }
                     $t = [string]$obj.type
                     if ($t -eq 'danmaku') {
@@ -170,6 +188,15 @@ function Start-DanmakuOverlay {
                 if (Get-Command Write-BiliDiag -ErrorAction SilentlyContinue) {
                     Write-BiliDiag -Level 'WARN' -Category 'DANMAKU' -Script 'Overlay' -Message ("drain error: {0}" -f $_.Exception.Message)
                 }
+            }
+
+            # heartbeat timeout: if no data (including heartbeats) for 60s, node likely dead
+            if ($st2.LastDataTick -gt 0 -and ($st2.TickCount - $st2.LastDataTick) -gt 1500) {
+                if (Get-Command Write-BiliDiag -ErrorAction SilentlyContinue) {
+                    Write-BiliDiag -Level 'WARN' -Category 'DANMAKU' -Script 'Overlay' -Message 'node heartbeat timeout; closing overlay'
+                }
+                $form2.Close()
+                return
             }
 
             $rm = $null

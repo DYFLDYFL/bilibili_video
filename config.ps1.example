@@ -14,3 +14,6 @@
 
 # 直播弹幕 overlay（需 Node.js；默认开启，见 Start-StreamPlay.ps1）
 # $EnableLiveDanmaku = $true
+# 弹幕滚动速度（px/tick @ 40ms；默认 10 ≈ 250px/s，越大越快）
+# 10 约 3 秒横穿 800px 窗口，全屏 1920px 约需 8 秒
+# $DanmakuSpeed = 10

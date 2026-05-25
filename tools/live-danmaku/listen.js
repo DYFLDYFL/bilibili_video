@@ -119,4 +119,7 @@ process.on('unhandledRejection', (e) => {
   emit({ type: 'error', message: `unhandledRejection: ${e && e.message ? e.message : e}` });
 });
 
-setInterval(() => {}, 60000);
+// heartbeat: every 30s so the overlay can detect if node has died
+setInterval(() => {
+  emit({ type: 'system', message: 'heartbeat' });
+}, 30000).unref();
