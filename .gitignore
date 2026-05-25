@@ -9,9 +9,11 @@ runtime/
 
 # Poe MCP（个人模型调用，与 B 站播放项目无关）
 .poe/
-.cursor/rules/poe-mcp-session.mdc
 
-# 本地工具（WebView2 SDK 等，首次运行自动下载）
+# Cursor 规则（本地 IDE 配置，不进仓库）
+.cursor/rules/
+
+# 本地工具（WebView2 SDK、node_modules 等，首次运行或 npm install 生成）
 tools/
 
 # Windows
