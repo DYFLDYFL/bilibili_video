@@ -7,6 +7,16 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
+# 把任意"可能是 IntPtr"的值安全转成 IntPtr；null / 类型不符 / 异常都映射到 Zero。
+# 必须定义在顶层，因为 timer tick scriptblock 是延迟在 message loop 里执行的，
+# 函数作用域随 Start-DanmakuOverlay 返回会被销毁。
+function ConvertTo-SafeHwnd {
+    param($Value)
+    if ($null -eq $Value) { return [IntPtr]::Zero }
+    if ($Value -is [IntPtr]) { return $Value }
+    try { return [IntPtr]$Value } catch { return [IntPtr]::Zero }
+}
+
 if (-not ('BiliWin32' -as [type])) {
     Add-Type -TypeDefinition @"
 using System;
@@ -76,9 +86,22 @@ function Start-DanmakuOverlay {
         Write-BiliDiag -Level 'INFO' -Category 'DANMAKU' -Script 'Overlay' -Message ("Start-DanmakuOverlay MpvPid={0} OutFile={1}" -f $MpvPid, $OutFile)
     }
 
+    # mpv 退出时 timer 可能竞态触发 P/Invoke 类型转换异常。把这些非致命异常
+    # 路由到日志而不是弹出 WinForms "未处理异常" 对话框。
     try {
-        [System.Windows.Forms.Application]::SetUnhandledExceptionMode('Automatic')
+        [System.Windows.Forms.Application]::SetUnhandledExceptionMode('CatchException')
     } catch { }
+    $script:DanmakuThreadExHandler = [System.Threading.ThreadExceptionEventHandler] {
+        param($s, $e)
+        if (Get-Command Write-BiliDiag -ErrorAction SilentlyContinue) {
+            Write-BiliDiag -Level 'WARN' -Category 'DANMAKU' -Script 'Overlay' `
+                -Message ("ThreadException suppressed: {0}" -f $e.Exception.Message)
+        }
+    }
+    try {
+        [System.Windows.Forms.Application]::remove_ThreadException($script:DanmakuThreadExHandler)
+    } catch { }
+    [System.Windows.Forms.Application]::add_ThreadException($script:DanmakuThreadExHandler)
     [System.Windows.Forms.Application]::EnableVisualStyles()
 
     $fs = [System.IO.File]::Open(
@@ -169,14 +192,15 @@ function Start-DanmakuOverlay {
         if ($st.MpvPid -gt 0) {
             try {
                 $p = Get-Process -Id $st.MpvPid -ErrorAction SilentlyContinue
-                if ($p -and $p.MainWindowHandle -ne [IntPtr]::Zero) {
-                    $st.MpvHwnd = [IntPtr]$p.MainWindowHandle
+                $h = [IntPtr]::Zero
+                if ($p) {
+                    try { $h = [IntPtr]$p.MainWindowHandle } catch { $h = [IntPtr]::Zero }
                 }
-                if (-not $st.MpvHwnd -or $st.MpvHwnd -eq [IntPtr]::Zero) {
+                if ($h -eq [IntPtr]::Zero) {
                     $h = [BiliWin32]::FindMainWindowByPid([uint32]$st.MpvPid)
-                    if ($h -ne [IntPtr]::Zero) { $st.MpvHwnd = $h }
                 }
-            } catch { }
+                $st.MpvHwnd = $h
+            } catch { $st.MpvHwnd = [IntPtr]::Zero }
         }
 
         # Seed a banner so user knows overlay is alive
@@ -196,43 +220,64 @@ function Start-DanmakuOverlay {
 
             $st2.TickCount++
 
-            # Re-resolve and follow mpv window
+            # 把当前 hwnd 安全转成 IntPtr；后续都用本地变量 $hwnd，避免 PSCustomObject
+            # 弱类型字段在 P/Invoke 边界上被 PowerShell 推断成 string/null 触发崩溃。
+            $hwnd = ConvertTo-SafeHwnd $st2.MpvHwnd
+            $hwndAlive = $false
+            if ($hwnd -ne [IntPtr]::Zero) {
+                try { $hwndAlive = [BiliWin32]::IsWindow($hwnd) } catch { $hwndAlive = $false }
+            }
+
             if ($st2.MpvPid -gt 0) {
-                $needResolve = ($st2.MpvHwnd -eq [IntPtr]::Zero) -or (-not [BiliWin32]::IsWindow($st2.MpvHwnd))
-                if ($needResolve) {
-                    try {
-                        $alive = Get-Process -Id $st2.MpvPid -ErrorAction SilentlyContinue
-                        if (-not $alive) {
-                            $st2.MpvMissingTicks++
-                            # tolerate up to ~5s of process being missing before giving up
-                            if ($st2.MpvMissingTicks -gt 125) { $form2.Close(); return }
-                        } else {
-                            $st2.MpvMissingTicks = 0
-                            $h = $alive.MainWindowHandle
-                            if ($h -eq [IntPtr]::Zero) {
-                                $h = [BiliWin32]::FindMainWindowByPid([uint32]$st2.MpvPid)
+                if (-not $hwndAlive) {
+                    $alive = $null
+                    try { $alive = Get-Process -Id $st2.MpvPid -ErrorAction SilentlyContinue } catch { }
+                    if (-not $alive) {
+                        $st2.MpvMissingTicks++
+                        # mpv 进程消失短暂容忍 ~1 秒（用户切流时进程会重启），超过即关闭 overlay
+                        if ($st2.MpvMissingTicks -gt 25) {
+                            if (Get-Command Write-BiliDiag -ErrorAction SilentlyContinue) {
+                                Write-BiliDiag -Level 'INFO' -Category 'DANMAKU' -Script 'Overlay' -Message 'mpv exited; closing overlay'
                             }
-                            if ($h -ne [IntPtr]::Zero) { $st2.MpvHwnd = $h }
+                            $this.Stop()
+                            $form2.Close()
+                            return
                         }
-                    } catch { }
+                    } else {
+                        $st2.MpvMissingTicks = 0
+                        $newH = [IntPtr]::Zero
+                        try { $newH = [IntPtr]$alive.MainWindowHandle } catch { }
+                        if ($newH -eq [IntPtr]::Zero) {
+                            try { $newH = [BiliWin32]::FindMainWindowByPid([uint32]$st2.MpvPid) } catch { }
+                        }
+                        if ($newH -ne [IntPtr]::Zero) {
+                            $st2.MpvHwnd = $newH
+                            $hwnd = $newH
+                            try { $hwndAlive = [BiliWin32]::IsWindow($hwnd) } catch { $hwndAlive = $false }
+                        }
+                    }
                 } else {
                     $st2.MpvMissingTicks = 0
                 }
             }
 
-            # Follow mpv window if we have a valid handle
-            $synced = $false
-            if ($st2.MpvHwnd -ne [IntPtr]::Zero -and [BiliWin32]::IsWindow($st2.MpvHwnd) `
-                -and [BiliWin32]::IsWindowVisible($st2.MpvHwnd) -and (-not [BiliWin32]::IsIconic($st2.MpvHwnd))) {
-                $rc = New-Object BiliWin32+RECT
-                if ([BiliWin32]::GetWindowRect($st2.MpvHwnd, [ref]$rc)) {
-                    $w = $rc.Right - $rc.Left
-                    $h = $rc.Bottom - $rc.Top
-                    if ($w -gt 100 -and $h -gt 100) {
-                        if ($form2.Left -ne $rc.Left -or $form2.Top -ne $rc.Top -or $form2.Width -ne $w -or $form2.Height -ne $h) {
-                            $form2.SetBounds($rc.Left, $rc.Top, $w, $h)
+            # 跟随 mpv 窗口
+            if ($hwndAlive) {
+                $visible = $false; $iconic = $true
+                try {
+                    $visible = [BiliWin32]::IsWindowVisible($hwnd)
+                    $iconic  = [BiliWin32]::IsIconic($hwnd)
+                } catch { }
+                if ($visible -and (-not $iconic)) {
+                    $rc = New-Object BiliWin32+RECT
+                    if ([BiliWin32]::GetWindowRect($hwnd, [ref]$rc)) {
+                        $w = $rc.Right - $rc.Left
+                        $h = $rc.Bottom - $rc.Top
+                        if ($w -gt 100 -and $h -gt 100) {
+                            if ($form2.Left -ne $rc.Left -or $form2.Top -ne $rc.Top -or $form2.Width -ne $w -or $form2.Height -ne $h) {
+                                $form2.SetBounds($rc.Left, $rc.Top, $w, $h)
+                            }
                         }
-                        $synced = $true
                     }
                 }
             }

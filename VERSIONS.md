@@ -4,7 +4,8 @@
 
 | 版本 | 说明 | 标签 | 分支 |
 |------|------|------|------|
-| **v1.4.1** | 当前：**白色弹幕**（统一颜色） | `v1.4.1` | `main` |
+| **v1.5** | 当前：**弹幕 overlay 稳定性** | `v1.5` | `main` |
+| **v1.4.1** | 白色弹幕（统一颜色） | `v1.4.1` | `release/1.4.1` |
 | **v1.4** | 直播弹幕 overlay 改进 | `v1.4` | `release/1.4` |
 | **v1.3.3** | 直播弹幕（DeepSeek 部分可用） | `v1.3.3` | `release/1.3.3` |
 | **v1.3.2** | 维护补丁（`.gitignore`） | `v1.3.2` | `release/1.3.2` |
@@ -17,7 +18,37 @@
 
 ---
 
-## v1.4.1 — 白色弹幕（当前）
+## v1.5 — 弹幕 overlay 稳定性（当前）
+
+**适用场景：** v1.4.1 基础上，减少 overlay 崩溃、mpv 关窗后残留、HWND 类型错误等问题。
+
+**相比 v1.4.1 改进：**
+
+- `ConvertTo-SafeHwnd`：timer 内安全处理 mpv 窗口句柄，避免 IntPtr 转换异常
+- WinForms `CatchException` + 线程异常抑制，降低 P/Invoke 导致 overlay 闪退
+- mpv 退出后约 1 秒内关闭 overlay（不再长时间空挂）
+- 跟窗逻辑更稳健（最小化/句柄失效时重绑）
+
+**打包发布：**
+
+```powershell
+.\Pack-Release.ps1 -Version v1.5
+# 生成 dist\bilibili_video-v1.5.zip
+```
+
+**切换到 v1.5：**
+
+```powershell
+git fetch origin
+git checkout main
+git pull origin main
+# 或
+git checkout v1.5
+```
+
+---
+
+## v1.4.1 — 白色弹幕
 
 **适用场景：** v1.4 基础上，可将直播弹幕 **统一为白色**（或任意 `#RRGGBB` 颜色）。
 
@@ -295,7 +326,8 @@ git checkout v1.0
 ## 在 GitHub 上查看
 
 - 标签列表：<https://github.com/DYFLDYFL/bilibili_video/tags>
-- v1.4.1 代码：`git checkout v1.4.1` 或分支 `main`
+- v1.5 代码：`git checkout v1.5` 或分支 `main`
+- v1.4.1 代码：`git checkout v1.4.1` 或分支 `release/1.4.1`
 - v1.4 代码：`git checkout v1.4` 或分支 `release/1.4`
 - v1.3.3 代码：`git checkout v1.3.3` 或分支 `release/1.3.3`
 - v1.3.2 代码：`git checkout v1.3.2` 或分支 `release/1.3.2`

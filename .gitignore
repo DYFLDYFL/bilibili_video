@@ -18,6 +18,6 @@ runtime/danmaku-*.jsonl
 tools/webview2/
 tools/live-danmaku/node_modules/
 
-# Windows
-Thumbs.db
+dist/
+
 Desktop.ini
